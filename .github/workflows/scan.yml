@@ -1,0 +1,41 @@
+name: Tee Time Scanner
+
+on:
+  schedule:
+    # Every 15 minutes, 6 AM - 10 PM Pacific (UTC-8 → 14:00-06:00 UTC)
+    # GitHub Actions cron is UTC. Runs every 15 min during waking hours.
+    - cron: "*/15 14-23 * * *"  # 6 AM - 3:59 PM Pacific
+    - cron: "*/15 0-6 * * *"    # 4 PM - 10:59 PM Pacific
+  workflow_dispatch: # Allow manual trigger from GitHub UI
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          pip install playwright
+          playwright install chromium
+          playwright install-deps chromium
+
+      - name: Run scanner
+        env:
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          NOTIFY_EMAIL: ${{ secrets.NOTIFY_EMAIL }}
+        run: python check_teetimes.py
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: scan-results-${{ github.run_number }}
+          path: results/
+          retention-days: 7

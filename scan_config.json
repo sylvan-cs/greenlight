@@ -1,0 +1,24 @@
+{
+  "global_enabled": true,
+  "notify": {
+    "email": "sylvan@cedarstreet.co",
+    "resend_api_key": "",
+    "from_email": "GreenLight <onboarding@resend.dev>"
+  },
+  "courses": {
+    "galloping_hill": { "enabled": false },
+    "flanders_valley": { "enabled": false },
+    "neshanic_valley": { "enabled": false },
+    "rock_spring": { "enabled": false },
+    "cranbury": { "enabled": false },
+    "francis_byrne": { "enabled": false },
+    "hendricks_field": { "enabled": false },
+    "weequahic_park": { "enabled": false },
+    "skyway": { "enabled": false },
+    "hominy_hill": { "enabled": false },
+    "shark_river": { "enabled": false },
+    "mercer_oaks": { "enabled": false },
+    "windsor": { "enabled": true },
+    "healdsburg": { "enabled": true }
+  }
+}

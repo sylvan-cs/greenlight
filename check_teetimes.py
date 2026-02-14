@@ -1,0 +1,1181 @@
+"""
+GreenLight - Tee Time Availability Checker
+
+Uses Playwright (headless Chromium) to load booking pages, intercept
+the real API calls, and extract tee time data.
+
+Booking systems:
+  GolfNow    - api.gnsvc.com REST API (auth via cookies)
+  Chronogolf - GET /marketplace/v2/teetimes (course UUIDs auto-discovered)
+  ForeUP     - GET foreupsoftware.com/index.php/api/booking/times
+  TeeSnap    - GET /customer-api/teetimes-day (AngularJS SPA)
+
+Usage:
+  python check_teetimes.py          # scan enabled courses from scan_config.json
+  python check_teetimes.py --all    # scan ALL courses, ignore config
+"""
+
+import argparse
+import json
+import os
+import re
+import sys
+from datetime import datetime, timedelta
+
+sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
+from playwright.sync_api import sync_playwright, TimeoutError as PwTimeout
+
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+RESULTS_DIR = os.path.join(SCRIPT_DIR, "results")
+CONFIG_PATH = os.path.join(SCRIPT_DIR, "scan_config.json")
+os.makedirs(RESULTS_DIR, exist_ok=True)
+
+SPRING_DATE = (datetime.now() + timedelta(days=90)).strftime("%Y-%m-%d")
+NEAR_DATE = (datetime.now() + timedelta(days=3)).strftime("%Y-%m-%d")
+
+# ── Course configuration ────────────────────────────────────────────────
+COURSES = [
+    # GolfNow courses
+    {
+        "name": "Galloping Hill Golf Course",
+        "key": "galloping_hill",
+        "location": "Kenilworth, NJ",
+        "system": "golfnow",
+        "facility_id": 5095,
+        "slug": "5095-galloping-hill-golf-course",
+    },
+    {
+        "name": "Flanders Valley Golf Course",
+        "key": "flanders_valley",
+        "location": "Flanders, NJ",
+        "system": "golfnow",
+        "facility_id": 5151,
+        "slug": "5151-flanders-valley-golf-course-blue-to-white",
+    },
+    {
+        "name": "Neshanic Valley Golf Course",
+        "key": "neshanic_valley",
+        "location": "Neshanic Station, NJ",
+        "system": "golfnow",
+        "facility_id": 7083,
+        "slug": "7083-neshanic-valley-golf-course",
+    },
+    {
+        "name": "Rock Spring Golf Club",
+        "key": "rock_spring",
+        "location": "West Orange, NJ",
+        "system": "golfnow",
+        "facility_id": 19083,
+        "slug": "19083-rock-spring-golf-club-at-west-orange",
+    },
+    {
+        "name": "Cranbury Golf Club",
+        "key": "cranbury",
+        "location": "West Windsor, NJ",
+        "system": "golfnow",
+        "facility_id": 3250,
+        "slug": "3250-cranbury-golf-club",
+    },
+    # Chronogolf courses
+    {
+        "name": "Francis A. Byrne Golf Course",
+        "key": "francis_byrne",
+        "location": "West Orange, NJ",
+        "system": "chronogolf",
+        "slug": "francis-byrne-golf-course",
+        "course_uuid": None,  # auto-discovered
+    },
+    {
+        "name": "Hendricks Field Golf Course",
+        "key": "hendricks_field",
+        "location": "Belleville, NJ",
+        "system": "chronogolf",
+        "slug": "hendricks-field-golf-course",
+        "course_uuid": None,
+    },
+    {
+        "name": "Weequahic Park Golf Course",
+        "key": "weequahic_park",
+        "location": "Newark, NJ",
+        "system": "chronogolf",
+        "slug": "weequahic-park-golf-course",
+        "course_uuid": None,
+    },
+    {
+        "name": "Skyway Golf Course",
+        "key": "skyway",
+        "location": "Jersey City, NJ",
+        "system": "chronogolf",
+        "slug": "skyway-golf-course",
+        "course_uuid": None,
+    },
+    # ForeUP courses
+    {
+        "name": "Hominy Hill Golf Course",
+        "key": "hominy_hill",
+        "location": "Colts Neck, NJ",
+        "system": "foreup",
+        "course_id": 20155,
+    },
+    {
+        "name": "Shark River Golf Course",
+        "key": "shark_river",
+        "location": "Neptune, NJ",
+        "system": "foreup",
+        "course_id": 20158,
+    },
+    {
+        "name": "Mercer Oaks Golf Course",
+        "key": "mercer_oaks",
+        "location": "West Windsor, NJ",
+        "system": "foreup",
+        "course_id": 20965,
+    },
+    {
+        "name": "Windsor Golf Club",
+        "key": "windsor",
+        "location": "Windsor, CA",
+        "system": "foreup",
+        "course_id": 19850,
+        "schedule_id": 2751,
+    },
+    # TeeSnap courses
+    {
+        "name": "Healdsburg Golf Club",
+        "key": "healdsburg",
+        "location": "Healdsburg, CA",
+        "system": "teesnap",
+        "subdomain": "healdsburg",
+        "course_id": 20,
+    },
+]
+
+_ANALYTICS_SUBSTRINGS = [
+    "google-analytics", "googletagmanager", "facebook",
+    "cloudflare", "exacttarget", "onetrust", "golfid.io",
+    "beacon.min.js", "sentry",
+]
+
+
+def _is_analytics(url):
+    return any(s in url for s in _ANALYTICS_SUBSTRINGS)
+
+
+def _load_config():
+    """Load scan_config.json. Returns config dict or None if missing."""
+    if not os.path.exists(CONFIG_PATH):
+        return None
+    with open(CONFIG_PATH) as f:
+        return json.load(f)
+
+
+def _filter_courses(courses, config):
+    """Return only courses enabled in the config."""
+    if not config or not config.get("global_enabled", True):
+        return []
+    course_flags = config.get("courses", {})
+    return [c for c in courses if course_flags.get(c["key"], {}).get("enabled", False)]
+
+
+def run(scan_all=False):
+    config = _load_config()
+
+    if scan_all:
+        active_courses = list(COURSES)
+        print("GreenLight - Tee Time Availability Checker (--all mode)")
+    else:
+        active_courses = _filter_courses(COURSES, config)
+        print("GreenLight - Tee Time Availability Checker")
+
+    print(f"Run: {datetime.now().isoformat()}")
+    print(f"Dates: {NEAR_DATE} (near) / {SPRING_DATE} (spring)")
+    print(f"Courses: {len(active_courses)} of {len(COURSES)} enabled\n")
+
+    if not active_courses:
+        print("No courses enabled. Edit scan_config.json or use --all.")
+        return
+
+    # Group courses by booking system
+    by_system = {}
+    for c in active_courses:
+        by_system.setdefault(c["system"], []).append(c)
+
+    all_results = {}
+
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch(headless=True)
+        context = browser.new_context(
+            user_agent=(
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/131.0.0.0 Safari/537.36"
+            ),
+            viewport={"width": 1280, "height": 900},
+        )
+
+        if "golfnow" in by_system:
+            all_results.update(check_golfnow(context, by_system["golfnow"]))
+        if "chronogolf" in by_system:
+            all_results.update(check_chronogolf(context, by_system["chronogolf"]))
+        if "foreup" in by_system:
+            all_results.update(check_foreup(context, by_system["foreup"]))
+        if "teesnap" in by_system:
+            all_results.update(check_teesnap(context, by_system["teesnap"]))
+
+        browser.close()
+
+    # Save per-course JSON files and combined findings
+    for key, result in all_results.items():
+        _save(result, f"{key}.json")
+    findings = _build_findings(all_results)
+    _save(findings, "findings.json")
+
+    # Summary
+    print("\n" + "=" * 70)
+    print("SUMMARY")
+    print("=" * 70)
+    for course in active_courses:
+        result = all_results.get(course["key"])
+        if result:
+            _print_summary(course["name"], result)
+    print(f"\nResults saved to {RESULTS_DIR}/")
+
+    # Notifications
+    _notify(all_results, config)
+
+
+# =========================================================================
+# GolfNow
+# =========================================================================
+
+def check_golfnow(context, courses):
+    """Check all GolfNow courses. Returns {key: result} dict."""
+    print("=" * 70)
+    print(f"GOLFNOW ({len(courses)} courses)")
+    print("=" * 70)
+
+    results = {}
+    page = context.new_page()
+
+    for course in courses:
+        print(f"\n--- {course['name']} ({course['location']}) ---")
+
+        result = {
+            "course": course["name"],
+            "location": course["location"],
+            "system": "GolfNow",
+            "facility_id": course["facility_id"],
+            "checked_at": datetime.now().isoformat(),
+            "dates_checked": {},
+        }
+
+        api_calls = []
+        api_responses = []
+
+        def on_request(req):
+            if req.resource_type in ("xhr", "fetch"):
+                api_calls.append({"method": req.method, "url": req.url})
+
+        def on_response(resp):
+            if resp.request.resource_type not in ("xhr", "fetch"):
+                return
+            ct = resp.headers.get("content-type", "")
+            entry = {"url": resp.url, "status": resp.status, "content_type": ct}
+            if "json" in ct:
+                try:
+                    body = resp.json()
+                    entry["body_keys"] = (
+                        list(body.keys()) if isinstance(body, dict)
+                        else f"array[{len(body)}]" if isinstance(body, list)
+                        else type(body).__name__
+                    )
+                    entry["body_preview"] = json.dumps(body, indent=2)[:3000]
+                except Exception:
+                    pass
+            api_responses.append(entry)
+
+        page.on("request", on_request)
+        page.on("response", on_response)
+
+        for label, date in [("near", NEAR_DATE), ("spring", SPRING_DATE)]:
+            print(f"\n  [{label}] Loading {date}...")
+            date_result = _golfnow_load_date(page, course["slug"], date)
+            result["dates_checked"][label] = date_result
+
+        interesting_calls = [c for c in api_calls if not _is_analytics(c["url"])]
+        result["api_calls_captured"] = interesting_calls
+
+        interesting_responses = [
+            r for r in api_responses
+            if r.get("body_keys") and not _is_analytics(r["url"])
+        ]
+        result["api_responses"] = interesting_responses
+
+        print(f"\n  XHR/Fetch calls intercepted: {len(interesting_calls)}")
+        for c in interesting_calls:
+            print(f"    {c['method']} {c['url'][:120]}")
+        if interesting_responses:
+            print(f"  JSON responses captured: {len(interesting_responses)}")
+            for r in interesting_responses:
+                print(f"    [{r['status']}] {r['url'][:100]} -> keys: {r.get('body_keys')}")
+
+        # Remove listeners before next course
+        page.remove_listener("request", on_request)
+        page.remove_listener("response", on_response)
+        api_calls.clear()
+        api_responses.clear()
+
+        results[course["key"]] = result
+
+    page.screenshot(path=os.path.join(RESULTS_DIR, "golfnow.png"))
+    print(f"\n  Screenshot: golfnow.png")
+    page.close()
+    return results
+
+
+def _golfnow_load_date(page, slug, date):
+    """Load GolfNow facility page and extract tee time data."""
+    url = f"https://www.golfnow.com/tee-times/facility/{slug}/search"
+    date_result = {"date": date, "url": url, "tee_times": [], "status": "unknown"}
+
+    try:
+        page.goto(url, wait_until="domcontentloaded", timeout=30000)
+
+        try:
+            page.click("button:has-text('Continue'), button:has-text('Accept')", timeout=3000)
+        except PwTimeout:
+            pass
+
+        try:
+            page.wait_for_selector(
+                ".facility-results, [class*='no-results'], [class*='NoResults']",
+                timeout=15000,
+            )
+        except PwTimeout:
+            pass
+
+        page.wait_for_timeout(5000)
+
+        tee_times = _extract_golfnow_teetimes(page)
+        date_result["tee_times"] = tee_times
+        date_result["tee_time_count"] = len(tee_times)
+
+        try:
+            date_display = page.inner_text(
+                "[class*='date-picker'], [class*='datepicker'], .picker"
+            )
+            date_result["displayed_date"] = date_display.strip()[:50]
+        except Exception:
+            pass
+
+        page_text = page.inner_text("body")
+        for phrase in ["no tee times", "no results", "not available", "course is closed", "currently closed"]:
+            if phrase in page_text.lower():
+                date_result["status"] = "no_availability"
+                date_result["message"] = phrase
+                break
+        else:
+            date_result["status"] = "ok" if tee_times else "no_teetimes_found"
+
+        print(f"    Status: {date_result['status']}")
+        if date_result.get("displayed_date"):
+            print(f"    Displayed date: {date_result['displayed_date']}")
+        print(f"    Tee times: {len(tee_times)}")
+        if tee_times:
+            for tt in tee_times[:5]:
+                print(f"      {tt.get('time', '?')} | {tt.get('price', '?')} | {tt.get('holes', '?')}h | {tt.get('players', '?')}p")
+            if len(tee_times) > 5:
+                print(f"      ... and {len(tee_times) - 5} more")
+
+    except Exception as e:
+        date_result["status"] = "error"
+        date_result["error"] = str(e)
+        print(f"    Error: {e}")
+
+    return date_result
+
+
+def _extract_golfnow_teetimes(page):
+    """Extract tee time data from the rendered GolfNow page."""
+    tee_times = []
+
+    selectors = [
+        ".rate-group", "[class*='rate-group']",
+        ".tee-time-card", "[class*='tee-time-card']",
+        "[class*='teetime']",
+        "[data-teetime]", "[data-rateid]",
+    ]
+
+    for selector in selectors:
+        try:
+            elements = page.query_selector_all(selector)
+            for el in elements:
+                text = el.inner_text().strip()
+                if not text:
+                    continue
+                tt = _parse_tee_time_text(text)
+                if tt.get("time") or tt.get("price"):
+                    tee_times.append(tt)
+            if tee_times:
+                break
+        except Exception:
+            continue
+
+    if not tee_times:
+        try:
+            body = page.inner_text("body")
+            for m in re.finditer(r'(\d{1,2}:\d{2}\s*[AaPp][Mm]).*?(\$[\d,.]+)', body, re.DOTALL):
+                tee_times.append({"time": m.group(1).strip(), "price": m.group(2)})
+        except Exception:
+            pass
+
+    return tee_times
+
+
+# =========================================================================
+# Chronogolf
+# =========================================================================
+
+def check_chronogolf(context, courses):
+    """Check all Chronogolf courses. Returns {key: result} dict."""
+    print("\n" + "=" * 70)
+    print(f"CHRONOGOLF ({len(courses)} courses)")
+    print("=" * 70)
+
+    results = {}
+    page = context.new_page()
+
+    for course in courses:
+        print(f"\n--- {course['name']} ({course['location']}) ---")
+
+        result = {
+            "course": course["name"],
+            "location": course["location"],
+            "system": "Chronogolf / Lightspeed",
+            "checked_at": datetime.now().isoformat(),
+            "club_metadata": {},
+            "dates_checked": {},
+        }
+
+        # Step 1: Load club page for metadata + discover course UUID
+        print("\n  [meta] Loading club page...")
+        metadata = _chronogolf_load_club(page, course["slug"])
+        result["club_metadata"] = metadata
+
+        # Resolve the course UUID (auto-discover from __NEXT_DATA__)
+        course_uuid = course.get("course_uuid")
+        if not course_uuid and metadata.get("courses"):
+            course_uuid = metadata["courses"][0].get("uuid")
+            print(f"    Auto-discovered course UUID: {course_uuid}")
+
+        result["course_uuid"] = course_uuid
+
+        if not course_uuid:
+            print("    WARNING: No course UUID found, skipping tee time checks")
+            result["dates_checked"] = {
+                "near": {"date": NEAR_DATE, "status": "error", "error": "no course UUID"},
+                "spring": {"date": SPRING_DATE, "status": "error", "error": "no course UUID"},
+            }
+            results[course["key"]] = result
+            continue
+
+        # Intercept marketplace API responses
+        api_responses = []
+
+        def on_response(resp):
+            if "marketplace/v2" not in resp.url:
+                return
+            entry = {"url": resp.url, "status": resp.status}
+            try:
+                body = resp.json()
+                entry["body"] = body
+            except Exception:
+                pass
+            api_responses.append(entry)
+
+        page.on("response", on_response)
+
+        # Step 2: Load teetimes page for each date
+        for label, date in [("near", NEAR_DATE), ("spring", SPRING_DATE)]:
+            print(f"\n  [{label}] Checking {date}...")
+            api_responses.clear()
+            date_result = _chronogolf_load_teetimes(page, course["slug"], date, api_responses)
+            result["dates_checked"][label] = date_result
+
+        # Step 3: Direct API call
+        print(f"\n  [direct_api] Calling marketplace API directly...")
+        result["direct_api_test"] = _chronogolf_direct_api(page, course_uuid, NEAR_DATE)
+
+        page.remove_listener("response", on_response)
+        results[course["key"]] = result
+
+    page.screenshot(path=os.path.join(RESULTS_DIR, "chronogolf.png"))
+    print(f"\n  Screenshot: chronogolf.png")
+    page.close()
+    return results
+
+
+def _chronogolf_load_club(page, slug):
+    """Load club page and extract metadata from __NEXT_DATA__."""
+    url = f"https://www.chronogolf.com/club/{slug}"
+    metadata = {"url": url, "success": False}
+
+    try:
+        page.goto(url, wait_until="networkidle", timeout=30000)
+        page.wait_for_timeout(2000)
+
+        el = page.query_selector("#__NEXT_DATA__")
+        if el:
+            nd = json.loads(el.inner_text())
+            club = nd.get("props", {}).get("pageProps", {}).get("club", {})
+            features = club.get("features", {})
+
+            metadata.update({
+                "success": True,
+                "name": club.get("name"),
+                "id": club.get("id"),
+                "uuid": club.get("uuid"),
+                "phone": club.get("phone"),
+                "address": club.get("address"),
+                "city": club.get("city"),
+                "province": club.get("province"),
+                "online_booking_enabled": features.get("onlineBookingEnabled"),
+                "booking_range_days": features.get("defaultPublicBookingRange"),
+                "payment_option": features.get("paymentOption"),
+                "cancel_range_hours": features.get("cancelReservationTimeRange"),
+                "courses": [
+                    {"name": c.get("name"), "id": c.get("id"), "uuid": c.get("uuid"), "holes": c.get("nbHoles")}
+                    for c in club.get("courses", [])
+                ],
+                "affiliation_types": [
+                    {"name": a.get("name"), "id": a.get("id")}
+                    for a in club.get("affiliationTypes", [])
+                ],
+            })
+
+            print(f"    Club: {metadata['name']}")
+            print(f"    Online booking: {metadata['online_booking_enabled']}")
+            print(f"    Booking range: {metadata['booking_range_days']} days")
+            print(f"    Courses: {[c['name'] for c in metadata['courses']]}")
+        else:
+            print(f"    No __NEXT_DATA__ found")
+    except Exception as e:
+        metadata["error"] = str(e)
+        print(f"    Error: {e}")
+
+    return metadata
+
+
+def _chronogolf_load_teetimes(page, slug, date, api_responses):
+    """Load the teetimes page and capture the marketplace API response."""
+    url = (
+        f"https://www.chronogolf.com/club/{slug}/teetimes"
+        f"?date={date}&nb_holes=18"
+    )
+    date_result = {"date": date, "url": url, "tee_times": [], "status": "unknown"}
+
+    try:
+        page.goto(url, wait_until="networkidle", timeout=30000)
+        page.wait_for_timeout(5000)
+
+        for resp in api_responses:
+            if "marketplace/v2/teetimes" in resp.get("url", ""):
+                body = resp.get("body", {})
+                date_result["api_url"] = resp["url"]
+                date_result["api_status_code"] = resp["status"]
+                date_result["course_status"] = body.get("status")
+                raw_teetimes = body.get("teetimes", [])
+                date_result["tee_time_count"] = len(raw_teetimes)
+
+                if raw_teetimes:
+                    date_result["tee_times"] = raw_teetimes[:20]
+                    date_result["tee_time_sample_keys"] = (
+                        list(raw_teetimes[0].keys()) if isinstance(raw_teetimes[0], dict) else None
+                    )
+                    date_result["status"] = "ok"
+                elif body.get("status") == "closed":
+                    date_result["status"] = "closed"
+                else:
+                    date_result["status"] = "no_availability"
+                break
+
+        dom_teetimes = _extract_chronogolf_teetimes(page)
+        date_result["dom_tee_times"] = dom_teetimes
+        date_result["dom_tee_time_count"] = len(dom_teetimes)
+
+        page_text = page.inner_text("body")
+        for phrase in ["reservations available soon", "not available online", "contact the course", "closed"]:
+            if phrase in page_text.lower():
+                date_result["page_message"] = phrase
+                if date_result["status"] == "unknown":
+                    date_result["status"] = "booking_disabled"
+                break
+
+        if date_result["status"] == "unknown":
+            date_result["status"] = "ok" if (dom_teetimes or date_result["tee_times"]) else "no_teetimes_found"
+
+        print(f"    Course status: {date_result.get('course_status', 'n/a')}")
+        print(f"    API tee times: {date_result.get('tee_time_count', 0)}")
+        print(f"    DOM tee times: {len(dom_teetimes)}")
+        if date_result.get("page_message"):
+            print(f"    Page message: {date_result['page_message']}")
+        if date_result.get("tee_time_sample_keys"):
+            print(f"    Tee time fields: {date_result['tee_time_sample_keys']}")
+        if date_result["tee_times"]:
+            for tt in date_result["tee_times"][:3]:
+                if isinstance(tt, dict):
+                    print(f"      {tt.get('start_time', tt.get('time', '?'))} | ${tt.get('green_fee', tt.get('price', '?'))}")
+
+    except Exception as e:
+        date_result["status"] = "error"
+        date_result["error"] = str(e)
+        print(f"    Error: {e}")
+
+    return date_result
+
+
+def _chronogolf_direct_api(page, course_uuid, date):
+    """Call the Chronogolf marketplace API directly using the browser session."""
+    api_url = (
+        f"https://www.chronogolf.com/marketplace/v2/teetimes"
+        f"?start_date={date}&course_ids={course_uuid}&holes=18&page=1"
+    )
+    result = {"url": api_url, "success": False}
+
+    try:
+        body = page.evaluate("""
+            async (url) => {
+                const resp = await fetch(url, {
+                    headers: { 'Accept': 'application/json' },
+                    credentials: 'include',
+                });
+                return { status: resp.status, body: await resp.json() };
+            }
+        """, api_url)
+
+        result["success"] = True
+        result["http_status"] = body["status"]
+        result["course_status"] = body["body"].get("status")
+        result["tee_time_count"] = len(body["body"].get("teetimes", []))
+        result["response"] = body["body"]
+
+        if result["tee_time_count"] > 0 and isinstance(body["body"]["teetimes"][0], dict):
+            result["tee_time_fields"] = list(body["body"]["teetimes"][0].keys())
+
+        print(f"    URL: {api_url}")
+        print(f"    HTTP {body['status']} | course: {result['course_status']} | teetimes: {result['tee_time_count']}")
+        if result.get("tee_time_fields"):
+            print(f"    Fields: {result['tee_time_fields']}")
+    except Exception as e:
+        result["error"] = str(e)
+        print(f"    Error: {e}")
+
+    return result
+
+
+def _extract_chronogolf_teetimes(page):
+    """Extract tee time data from the rendered Chronogolf DOM."""
+    tee_times = []
+    selectors = [
+        "[class*='teetime']", "[class*='tee-time']",
+        "[class*='time-slot']", "[class*='slot-card']",
+        "[class*='availability']",
+    ]
+    for selector in selectors:
+        try:
+            for el in page.query_selector_all(selector):
+                text = el.inner_text().strip()
+                if text:
+                    tt = _parse_tee_time_text(text)
+                    if tt.get("time"):
+                        tee_times.append(tt)
+            if tee_times:
+                break
+        except Exception:
+            continue
+    return tee_times
+
+
+# =========================================================================
+# ForeUP
+# =========================================================================
+
+def check_foreup(context, courses):
+    """Check all ForeUP courses. Returns {key: result} dict."""
+    print("\n" + "=" * 70)
+    print(f"FOREUP ({len(courses)} courses)")
+    print("=" * 70)
+
+    results = {}
+    page = context.new_page()
+
+    for course in courses:
+        print(f"\n--- {course['name']} ({course['location']}) ---")
+
+        result = {
+            "course": course["name"],
+            "location": course["location"],
+            "system": "ForeUP",
+            "course_id": course["course_id"],
+            "checked_at": datetime.now().isoformat(),
+            "dates_checked": {},
+        }
+
+        # Load the booking page once to establish session/cookies
+        schedule_id = course.get("schedule_id", "")
+        booking_url = f"https://foreupsoftware.com/index.php/booking/{course['course_id']}/teetimes"
+        print(f"\n  Loading booking page: {booking_url}")
+        try:
+            page.goto(booking_url, wait_until="domcontentloaded", timeout=30000)
+            page.wait_for_timeout(3000)
+        except Exception as e:
+            print(f"    Error loading booking page: {e}")
+
+        for label, date in [("near", NEAR_DATE), ("spring", SPRING_DATE)]:
+            print(f"\n  [{label}] Checking {date}...")
+            date_result = _foreup_check_date(page, course["course_id"], date, schedule_id)
+            result["dates_checked"][label] = date_result
+
+        results[course["key"]] = result
+
+    page.screenshot(path=os.path.join(RESULTS_DIR, "foreup.png"))
+    print(f"\n  Screenshot: foreup.png")
+    page.close()
+    return results
+
+
+def _foreup_check_date(page, course_id, date, schedule_id=""):
+    """Call the ForeUP tee times API via in-browser fetch."""
+    api_url = (
+        f"https://foreupsoftware.com/index.php/api/booking/times"
+        f"?time=all&date={date}&holes=18&players=0"
+        f"&booking_class=&schedule_id={schedule_id}&specials_only=0&api_key=no_limits"
+    )
+    date_result = {"date": date, "api_url": api_url, "tee_times": [], "status": "unknown"}
+
+    try:
+        raw = page.evaluate("""
+            async (url) => {
+                const resp = await fetch(url, {
+                    headers: { 'Accept': 'application/json' },
+                    credentials: 'include',
+                });
+                return { status: resp.status, body: await resp.text() };
+            }
+        """, api_url)
+
+        date_result["http_status"] = raw["status"]
+
+        try:
+            body = json.loads(raw["body"])
+        except json.JSONDecodeError:
+            date_result["status"] = "error"
+            date_result["error"] = f"Non-JSON response: {raw['body'][:200]}"
+            print(f"    Error: non-JSON response (HTTP {raw['status']})")
+            return date_result
+
+        # ForeUP returns an array of tee time objects
+        if isinstance(body, list):
+            tee_times = []
+            for slot in body:
+                tt = {
+                    "time": slot.get("time", ""),
+                    "price": slot.get("green_fee") or slot.get("price", ""),
+                    "holes": slot.get("holes"),
+                    "players_available": slot.get("available_spots") or slot.get("max_players"),
+                    "booking_class": slot.get("booking_class", ""),
+                }
+                # Clean up the time display
+                if tt["time"]:
+                    tee_times.append(tt)
+            date_result["tee_times"] = tee_times
+            date_result["tee_time_count"] = len(tee_times)
+            date_result["status"] = "ok" if tee_times else "no_availability"
+
+            if body:
+                date_result["tee_time_sample_keys"] = list(body[0].keys()) if isinstance(body[0], dict) else None
+
+        elif isinstance(body, dict):
+            # Some error or status response
+            date_result["response"] = body
+            if body.get("message"):
+                date_result["message"] = body["message"]
+            date_result["status"] = "closed" if "closed" in str(body).lower() else "no_availability"
+        else:
+            date_result["status"] = "unknown_format"
+            date_result["response_type"] = type(body).__name__
+
+        print(f"    HTTP {raw['status']} | Status: {date_result['status']}")
+        print(f"    Tee times: {date_result.get('tee_time_count', 0)}")
+        if date_result.get("tee_time_sample_keys"):
+            print(f"    Fields: {date_result['tee_time_sample_keys']}")
+        if date_result["tee_times"]:
+            for tt in date_result["tee_times"][:5]:
+                print(f"      {tt.get('time', '?')} | ${tt.get('price', '?')} | {tt.get('holes', '?')}h | {tt.get('players_available', '?')} spots")
+            if len(date_result["tee_times"]) > 5:
+                print(f"      ... and {len(date_result['tee_times']) - 5} more")
+
+    except Exception as e:
+        date_result["status"] = "error"
+        date_result["error"] = str(e)
+        print(f"    Error: {e}")
+
+    return date_result
+
+
+# =========================================================================
+# TeeSnap
+# =========================================================================
+
+def check_teesnap(context, courses):
+    """Check all TeeSnap courses. Returns {key: result} dict.
+
+    TeeSnap API (discovered):
+      GET /customer-api/teetimes-day?course={id}&date=YYYY-MM-DD&players=4&holes=18&addons=on
+      Returns: {"teeTimes": {"bookings": [...], "slots": [...], ...}}
+    """
+    print("\n" + "=" * 70)
+    print(f"TEESNAP ({len(courses)} courses)")
+    print("=" * 70)
+
+    results = {}
+    page = context.new_page()
+
+    for course in courses:
+        print(f"\n--- {course['name']} ({course['location']}) ---")
+
+        subdomain = course["subdomain"]
+        course_id = course["course_id"]
+        base_url = f"https://{subdomain}.teesnap.net"
+
+        result = {
+            "course": course["name"],
+            "location": course["location"],
+            "system": "TeeSnap",
+            "subdomain": subdomain,
+            "course_id": course_id,
+            "checked_at": datetime.now().isoformat(),
+            "dates_checked": {},
+        }
+
+        # Load the booking page once to establish session
+        print(f"\n  Loading booking page: {base_url}")
+        try:
+            page.goto(base_url, wait_until="domcontentloaded", timeout=30000)
+            page.wait_for_timeout(3000)
+        except Exception as e:
+            print(f"    Error loading page: {e}")
+
+        # Call the API directly for each date
+        for label, date in [("near", NEAR_DATE), ("spring", SPRING_DATE)]:
+            print(f"\n  [{label}] Checking {date}...")
+            date_result = _teesnap_check_date(page, base_url, course_id, date)
+            result["dates_checked"][label] = date_result
+
+        results[course["key"]] = result
+
+    page.screenshot(path=os.path.join(RESULTS_DIR, "teesnap.png"))
+    print(f"\n  Screenshot: teesnap.png")
+    page.close()
+    return results
+
+
+def _teesnap_check_date(page, base_url, course_id, date):
+    """Call the TeeSnap teetimes-day API via in-browser fetch."""
+    api_url = (
+        f"{base_url}/customer-api/teetimes-day"
+        f"?course={course_id}&date={date}&players=4&holes=18&addons=on"
+    )
+    date_result = {"date": date, "api_url": api_url, "tee_times": [], "status": "unknown"}
+
+    try:
+        raw = page.evaluate("""
+            async (url) => {
+                const resp = await fetch(url, {
+                    headers: { 'Accept': 'application/json' },
+                    credentials: 'include',
+                });
+                return { status: resp.status, body: await resp.text() };
+            }
+        """, api_url)
+
+        date_result["http_status"] = raw["status"]
+
+        try:
+            body = json.loads(raw["body"])
+        except json.JSONDecodeError:
+            date_result["status"] = "error"
+            date_result["error"] = f"Non-JSON response: {raw['body'][:200]}"
+            print(f"    Error: non-JSON response (HTTP {raw['status']})")
+            return date_result
+
+        tee_times_data = body.get("teeTimes", {})
+
+        # TeeSnap nests available slots under teeTimes.teeTimes[]
+        # Each slot: {teeTime, prices[], teeOffSections[], rackRateName, ...}
+        raw_slots = tee_times_data.get("teeTimes", [])
+        bookings = tee_times_data.get("bookings", [])
+        tee_times = []
+
+        for slot in raw_slots:
+            tee_time_iso = slot.get("teeTime", "")
+            # Parse ISO time to display format
+            time_display = ""
+            if tee_time_iso:
+                try:
+                    dt = datetime.fromisoformat(tee_time_iso)
+                    time_display = dt.strftime("%I:%M %p").lstrip("0")
+                except Exception:
+                    time_display = tee_time_iso
+
+            # Check if any section is held (unavailable)
+            is_held = any(
+                sec.get("isHeld", False)
+                for sec in slot.get("teeOffSections", [])
+            )
+
+            # Get 18-hole price (prefer) or 9-hole
+            prices = slot.get("prices", [])
+            price_18 = next((p["price"] for p in prices if p.get("roundType") == "EIGHTEEN_HOLE"), None)
+            price_9 = next((p["price"] for p in prices if p.get("roundType") == "NINE_HOLE"), None)
+
+            tt = {
+                "time": time_display,
+                "tee_time_iso": tee_time_iso,
+                "price_18": price_18,
+                "price_9": price_9,
+                "rate": slot.get("rackRateName", ""),
+                "is_held": is_held,
+            }
+            tee_times.append(tt)
+
+        # Filter to available (not held) slots
+        available = [t for t in tee_times if not t["is_held"]]
+
+        date_result["tee_times"] = tee_times[:30]  # save first 30
+        date_result["tee_time_count"] = len(tee_times)
+        date_result["available_count"] = len(available)
+        date_result["held_count"] = len(tee_times) - len(available)
+        date_result["existing_bookings"] = len(bookings)
+
+        if available:
+            date_result["status"] = "ok"
+        elif tee_times:
+            date_result["status"] = "fully_booked"
+        elif bookings:
+            date_result["status"] = "booked_up"
+        else:
+            date_result["status"] = "no_availability"
+
+        print(f"    HTTP {raw['status']} | Status: {date_result['status']}")
+        print(f"    Tee times: {len(tee_times)} ({len(available)} available, {date_result['held_count']} held)")
+        print(f"    Existing bookings: {len(bookings)}")
+        if available:
+            for tt in available[:5]:
+                print(f"      {tt['time']} | 18h: ${tt.get('price_18', '?')} | 9h: ${tt.get('price_9', '?')} | {tt['rate']}")
+            if len(available) > 5:
+                print(f"      ... and {len(available) - 5} more available")
+
+    except Exception as e:
+        date_result["status"] = "error"
+        date_result["error"] = str(e)
+        print(f"    Error: {e}")
+
+    return date_result
+
+
+# =========================================================================
+# Shared helpers
+# =========================================================================
+
+def _parse_tee_time_text(text):
+    """Parse a block of text for tee time details."""
+    tt = {}
+    m = re.search(r'(\d{1,2}:\d{2}\s*(?:[AaPp][Mm])?)', text)
+    if m:
+        tt["time"] = m.group(1).strip()
+    m = re.search(r'\$[\d,.]+', text)
+    if m:
+        tt["price"] = m.group(0)
+    m = re.search(r'(\d+)\s*[Hh]ole', text)
+    if m:
+        tt["holes"] = int(m.group(1))
+    m = re.search(r'(\d+)\s*[Pp]layer', text)
+    if m:
+        tt["players"] = int(m.group(1))
+    tt["raw_text"] = text[:200]
+    return tt
+
+
+def _save(data, filename):
+    path = os.path.join(RESULTS_DIR, filename)
+    with open(path, "w") as f:
+        json.dump(data, f, indent=2, default=str)
+
+
+def _print_summary(label, result):
+    dates = result.get("dates_checked", {})
+    print(f"\n{label}:")
+    for dl, dd in dates.items():
+        count = dd.get("tee_time_count", 0)
+        status = dd.get("status", "?")
+        cstatus = dd.get("course_status", "")
+        msg = dd.get("message") or dd.get("page_message") or ""
+        line = f"  [{dl}] {dd.get('date')}: {status}"
+        if cstatus:
+            line += f" (course: {cstatus})"
+        if count:
+            line += f" - {count} tee times"
+        if msg:
+            line += f" - {msg}"
+        print(line)
+
+    direct = result.get("direct_api_test", {})
+    if direct:
+        print(f"  [direct_api] status={direct.get('course_status', 'n/a')}, teetimes={direct.get('tee_time_count', 'n/a')}")
+
+    api_count = len(result.get("api_calls_captured", []))
+    if api_count:
+        print(f"  Network calls intercepted: {api_count}")
+
+
+def _build_findings(all_results):
+    findings = {"run_time": datetime.now().isoformat(), "courses": {}}
+    for key, result in all_results.items():
+        entry = {
+            "system": result.get("system"),
+            "course": result.get("course"),
+            "location": result.get("location"),
+            "dates_checked": {},
+        }
+
+        # System-specific IDs
+        if result.get("facility_id"):
+            entry["facility_id"] = result["facility_id"]
+        if result.get("course_uuid"):
+            entry["course_uuid"] = result["course_uuid"]
+        if result.get("course_id"):
+            entry["course_id"] = result["course_id"]
+
+        # Booking metadata (Chronogolf)
+        meta = result.get("club_metadata", {})
+        if meta.get("online_booking_enabled") is not None:
+            entry["online_booking_enabled"] = meta["online_booking_enabled"]
+
+        # Dates
+        for dl, dd in result.get("dates_checked", {}).items():
+            entry["dates_checked"][dl] = {
+                "date": dd.get("date"),
+                "status": dd.get("status"),
+                "tee_time_count": dd.get("tee_time_count", 0),
+            }
+            if dd.get("course_status"):
+                entry["dates_checked"][dl]["course_status"] = dd["course_status"]
+
+        # Direct API test (Chronogolf)
+        direct = result.get("direct_api_test", {})
+        if direct:
+            entry["direct_api_test"] = {
+                "success": direct.get("success"),
+                "course_status": direct.get("course_status"),
+                "tee_time_count": direct.get("tee_time_count"),
+            }
+
+        # GolfNow network stats
+        if result.get("api_calls_captured"):
+            entry["api_calls_intercepted"] = len(result["api_calls_captured"])
+        if result.get("api_responses"):
+            entry["api_responses_with_json"] = len(result["api_responses"])
+
+        findings["courses"][key] = entry
+
+    return findings
+
+
+def _notify(all_results, config):
+    """Send email notification if any course has available tee times."""
+    if not config:
+        return
+
+    notify_cfg = config.get("notify", {})
+    api_key = os.environ.get("RESEND_API_KEY") or notify_cfg.get("resend_api_key", "")
+    to_email = os.environ.get("NOTIFY_EMAIL") or notify_cfg.get("email", "")
+    from_email = notify_cfg.get("from_email", "GreenLight <onboarding@resend.dev>")
+
+    if not api_key or api_key.startswith("re_YOUR"):
+        return
+    if not to_email or to_email == "you@example.com":
+        return
+
+    # Collect courses with available tee times
+    alerts = []
+    for key, result in all_results.items():
+        for label, dd in result.get("dates_checked", {}).items():
+            count = dd.get("tee_time_count", 0)
+            available = dd.get("available_count", count)  # TeeSnap tracks this separately
+            if available > 0 and dd.get("status") == "ok":
+                alerts.append({
+                    "course": result.get("course"),
+                    "location": result.get("location"),
+                    "system": result.get("system"),
+                    "date": dd.get("date"),
+                    "label": label,
+                    "count": available,
+                    "tee_times": dd.get("tee_times", [])[:10],
+                })
+
+    if not alerts:
+        print("\nNo available tee times to notify about.")
+        return
+
+    # Build email body
+    subject = f"GreenLight: {len(alerts)} tee time alert(s)"
+    lines = [
+        f"GreenLight found available tee times at {len(alerts)} course/date combination(s):\n",
+    ]
+    for a in alerts:
+        lines.append(f"## {a['course']} - {a['location']}")
+        lines.append(f"Date: {a['date']} | System: {a['system']} | Available: {a['count']}")
+        for tt in a["tee_times"][:5]:
+            if isinstance(tt, dict):
+                time = tt.get("time", tt.get("tee_time_iso", "?"))
+                price = tt.get("price") or tt.get("price_18") or tt.get("green_fee") or "?"
+                lines.append(f"  {time} - ${price}")
+        if a["count"] > 5:
+            lines.append(f"  ... and {a['count'] - 5} more")
+        lines.append("")
+    lines.append(f"Scan time: {datetime.now().isoformat()}")
+    body = "\n".join(lines)
+
+    print(f"\nSending alert email to {to_email} ({len(alerts)} alerts)...")
+    try:
+        import urllib.request
+        payload = json.dumps({
+            "from": from_email,
+            "to": [to_email],
+            "subject": subject,
+            "text": body,
+        }).encode()
+        req = urllib.request.Request(
+            "https://api.resend.com/emails",
+            data=payload,
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+                "User-Agent": "GreenLight/1.0",
+            },
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            result = json.loads(resp.read())
+            print(f"  Email sent: {result.get('id', 'ok')}")
+    except Exception as e:
+        print(f"  Email send failed: {e}")
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="GreenLight Tee Time Scanner")
+    parser.add_argument("--all", action="store_true", help="Scan ALL courses, ignore config")
+    args = parser.parse_args()
+    run(scan_all=args.all)
