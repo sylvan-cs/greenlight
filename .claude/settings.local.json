@@ -1,0 +1,35 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:www.golfnow.com)",
+      "WebSearch",
+      "WebFetch(domain:www.chronogolf.com)",
+      "WebFetch(domain:golfmercercounty.com)",
+      "WebFetch(domain:www.monmouthcountyparks.com)",
+      "WebFetch(domain:foreupsoftware.com)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:foreup.docs.apiary.io)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(python:*)",
+      "WebFetch(domain:healdsburg.teesnap.net)",
+      "WebFetch(domain:coffingolf.teesnap.net)",
+      "WebFetch(domain:windsorgolf.com)",
+      "Bash(export PATH=\"/c/Program Files/GitHub CLI:$PATH\")",
+      "Bash(gh auth:*)",
+      "Bash(git commit:*)",
+      "Bash(git config:*)",
+      "Bash(gh repo create:*)",
+      "Bash(git push:*)",
+      "Bash(gh secret set:*)",
+      "Bash(gh secret:*)",
+      "Bash(gh workflow run:*)",
+      "Bash(gh run list:*)",
+      "Bash(gh run watch:*)",
+      "Bash(gh run view:*)",
+      "Bash(\"/c/Program Files/GitHub CLI/gh.exe\" workflow disable scan.yml)",
+      "Bash(\"/c/Program Files/GitHub CLI/gh.exe\" workflow list)",
+      "Bash(\"/c/Program Files/GitHub CLI/gh.exe\" workflow list --all)",
+      "Bash(git add:*)"
+    ]
+  }
+}

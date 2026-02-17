@@ -20,7 +20,7 @@ import json
 import os
 import re
 import sys
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 sys.stderr.reconfigure(encoding="utf-8", errors="replace")
@@ -158,6 +158,24 @@ _ANALYTICS_SUBSTRINGS = [
     "beacon.min.js", "sentry",
 ]
 
+# Maps scraper course key -> Supabase courses.slug
+COURSE_SLUG_MAP = {
+    "galloping_hill": "galloping-hill",
+    "flanders_valley": "flanders-valley",
+    "neshanic_valley": "neshanic-valley",
+    "rock_spring": "rock-spring",
+    "cranbury": "cranbury",
+    "francis_byrne": "francis-byrne",
+    "hendricks_field": "hendricks-field",
+    "weequahic_park": "weequahic",
+    "skyway": "skyway",
+    "hominy_hill": "hominy-hill",
+    "shark_river": "shark-river",
+    "mercer_oaks": "mercer-oaks",
+    "healdsburg": "healdsburg",
+    "windsor": "windsor",
+}
+
 
 def _is_analytics(url):
     return any(s in url for s in _ANALYTICS_SUBSTRINGS)
@@ -244,6 +262,9 @@ def run(scan_all=False):
 
     # Notifications
     _notify(all_results, config)
+
+    # Sync to Supabase
+    _sync_to_supabase(all_results, active_courses)
 
 
 # =========================================================================
@@ -1092,6 +1113,188 @@ def _build_findings(all_results):
         findings["courses"][key] = entry
 
     return findings
+
+
+def _normalize_time(time_str):
+    """Convert various time formats to HH:MM (24-hour)."""
+    if not time_str:
+        return None
+    time_str = time_str.strip()
+
+    # ISO datetime: "2026-02-18T07:30:00"
+    if "T" in time_str:
+        try:
+            dt = datetime.fromisoformat(time_str.replace("Z", "+00:00"))
+            return dt.strftime("%H:%M")
+        except (ValueError, TypeError):
+            pass
+
+    # AM/PM formats: "7:30 AM", "7:30AM"
+    clean = re.sub(r'\s+', ' ', time_str).strip()
+    for fmt in ("%I:%M %p", "%I:%M%p"):
+        try:
+            dt = datetime.strptime(clean, fmt)
+            return dt.strftime("%H:%M")
+        except ValueError:
+            continue
+
+    # Already 24-hour: "07:30" or "7:30"
+    m = re.match(r'^(\d{1,2}):(\d{2})$', time_str)
+    if m:
+        return f"{int(m.group(1)):02d}:{m.group(2)}"
+
+    return None
+
+
+def _parse_price_cents(raw):
+    """Convert a price value (string or number) to (cents, label). Returns (None, None) on failure."""
+    if raw is None or raw == "" or raw == "?":
+        return None, None
+
+    label = str(raw)
+    clean = label.replace("$", "").replace(",", "").strip()
+    try:
+        cents = int(round(float(clean) * 100))
+        if "$" not in label:
+            label = f"${float(clean):.2f}"
+        return cents, label
+    except (ValueError, TypeError):
+        return None, label
+
+
+def _build_booking_link(course, date):
+    """Build a direct booking URL for the course."""
+    system = course["system"]
+    if system == "golfnow":
+        return f"https://www.golfnow.com/tee-times/facility/{course['slug']}/search"
+    elif system == "chronogolf":
+        return f"https://www.chronogolf.com/club/{course['slug']}/teetimes?date={date}"
+    elif system == "foreup":
+        return f"https://foreupsoftware.com/index.php/booking/{course['course_id']}/teetimes"
+    elif system == "teesnap":
+        return f"https://{course['subdomain']}.teesnap.net"
+    return None
+
+
+def _sync_to_supabase(all_results, active_courses):
+    """Write scan results to Supabase. Non-fatal on failure."""
+    supabase_url = os.environ.get("SUPABASE_URL", "")
+    supabase_key = os.environ.get("SUPABASE_SERVICE_KEY", "")
+
+    if not supabase_url or not supabase_key:
+        print("\nSupabase: skipping (SUPABASE_URL / SUPABASE_SERVICE_KEY not set)")
+        return
+
+    try:
+        from supabase import create_client
+        sb = create_client(supabase_url, supabase_key)
+
+        # a) Fetch courses from DB, build slug -> UUID mapping
+        courses_resp = sb.table("courses").select("id, slug").execute()
+        slug_to_uuid = {row["slug"]: row["id"] for row in courses_resp.data}
+        print(f"\nSupabase: {len(slug_to_uuid)} courses in database")
+
+        # b) Build rows to upsert
+        now_iso = datetime.now(timezone.utc).isoformat()
+        rows = []
+        dates_by_course_uuid = {}  # track which dates we checked per course
+
+        for course in active_courses:
+            db_slug = COURSE_SLUG_MAP.get(course["key"])
+            if not db_slug:
+                continue
+            course_uuid = slug_to_uuid.get(db_slug)
+            if not course_uuid:
+                print(f"  Supabase: no DB entry for slug '{db_slug}', skipping")
+                continue
+
+            result = all_results.get(course["key"])
+            if not result:
+                continue
+
+            checked_dates = []
+            for label, dd in result.get("dates_checked", {}).items():
+                tee_date = dd.get("date")
+                if not tee_date:
+                    continue
+                checked_dates.append(tee_date)
+
+                for tt in dd.get("tee_times", []):
+                    # Skip held/unavailable TeeSnap slots
+                    if tt.get("is_held"):
+                        continue
+
+                    time_24 = _normalize_time(
+                        tt.get("tee_time_iso") or tt.get("time") or tt.get("start_time")
+                    )
+                    if not time_24:
+                        continue
+
+                    # Price
+                    if course["system"] == "teesnap":
+                        price_raw = tt.get("price_18") or tt.get("price_9")
+                    else:
+                        price_raw = tt.get("green_fee") or tt.get("price")
+                    price_cents, price_label = _parse_price_cents(price_raw)
+
+                    # Spots
+                    spots = tt.get("players_available") or tt.get("players")
+
+                    row = {
+                        "course_id": course_uuid,
+                        "tee_date": tee_date,
+                        "tee_time": time_24,
+                        "is_available": True,
+                        "last_seen_at": now_iso,
+                        "source_data": json.dumps(tt, default=str),
+                    }
+                    if price_cents is not None:
+                        row["price_cents"] = price_cents
+                    if price_label:
+                        row["price_label"] = price_label
+                    if spots is not None:
+                        try:
+                            row["spots_available"] = int(spots)
+                        except (ValueError, TypeError):
+                            pass
+                    booking_link = _build_booking_link(course, tee_date)
+                    if booking_link:
+                        row["booking_link"] = booking_link
+
+                    rows.append(row)
+
+            if checked_dates:
+                dates_by_course_uuid[course_uuid] = checked_dates
+
+        # Upsert in batches of 100
+        upserted = 0
+        for i in range(0, len(rows), 100):
+            chunk = rows[i:i + 100]
+            sb.table("tee_times").upsert(
+                chunk, on_conflict="course_id,tee_date,tee_time"
+            ).execute()
+            upserted += len(chunk)
+        print(f"  Supabase: upserted {upserted} tee times")
+
+        # c) Mark stale tee times as unavailable (last_seen > 25 min ago)
+        cutoff = (datetime.now(timezone.utc) - timedelta(minutes=25)).isoformat()
+        stale_total = 0
+        for course_uuid, dates in dates_by_course_uuid.items():
+            for d in dates:
+                resp = (
+                    sb.table("tee_times")
+                    .update({"is_available": False})
+                    .eq("course_id", course_uuid)
+                    .eq("tee_date", d)
+                    .eq("is_available", True)
+                    .lt("last_seen_at", cutoff)
+                    .execute()
+                )
+                stale_total += len(resp.data) if resp.data else 0
+        print(f"  Supabase: marked {stale_total} stale tee times as unavailable")
+
+    except Exception as e:
+        print(f"\nSupabase sync error: {e}")
 
 
 def _notify(all_results, config):
