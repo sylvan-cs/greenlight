@@ -1308,7 +1308,7 @@ def _notify(all_results, config):
     notify_cfg = config.get("notify", {})
     api_key = os.environ.get("RESEND_API_KEY") or notify_cfg.get("resend_api_key", "")
     to_email = os.environ.get("NOTIFY_EMAIL") or notify_cfg.get("email", "")
-    from_email = notify_cfg.get("from_email", "GreenLight <onboarding@resend.dev>")
+    from_email = notify_cfg.get("from_email", "GreenLight <sylvan@cedarstreet.co>")
 
     if not api_key or api_key.startswith("re_YOUR"):
         return
@@ -1421,7 +1421,7 @@ def _send_sms(twilio_sid, twilio_token, twilio_phone, to_phone, message):
 
 def _send_match_email(to_email, course_name, time_display, date_display,
                       price_display, spots_display, booking_url, round_id,
-                      from_email="GreenLight <onboarding@resend.dev>"):
+                      from_email="GreenLight <sylvan@cedarstreet.co>"):
     """Send match notification email via Resend (HTML)."""
     api_key = os.environ.get("RESEND_API_KEY", "")
     print(f"    [DEBUG _send_match_email] from_email = '{from_email}'")
@@ -1475,7 +1475,7 @@ def _send_match_email(to_email, course_name, time_display, date_display,
 
 def _send_rsvp_email(to_email, creator_name, time_display, course_name,
                      date_display, share_code,
-                     from_email="GreenLight <onboarding@resend.dev>"):
+                     from_email="GreenLight <sylvan@cedarstreet.co>"):
     """Send RSVP notification email via Resend."""
     api_key = os.environ.get("RESEND_API_KEY", "")
     if not api_key or api_key.startswith("re_YOUR"):
@@ -1525,7 +1525,7 @@ def _check_round_matches():
     # Load from_email from config (same source as the working alert email)
     config = _load_config()
     notify_cfg = config.get("notify", {}) if config else {}
-    from_email = notify_cfg.get("from_email", "GreenLight <onboarding@resend.dev>")
+    from_email = notify_cfg.get("from_email", "GreenLight <sylvan@cedarstreet.co>")
 
     if not supabase_url or not supabase_key:
         print("\nMatching: skipping (Supabase not configured)")

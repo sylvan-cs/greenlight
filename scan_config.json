@@ -3,7 +3,7 @@
   "notify": {
     "email": "sylvan@cedarstreet.co",
     "resend_api_key": "",
-    "from_email": "GreenLight <onboarding@resend.dev>"
+    "from_email": "GreenLight <sylvan@cedarstreet.co>"
   },
   "courses": {
     "galloping_hill": { "enabled": false },
