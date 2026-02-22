@@ -1356,6 +1356,8 @@ def _notify(all_results, config):
     body = "\n".join(lines)
 
     print(f"\nSending alert email to {to_email} ({len(alerts)} alerts)...")
+    print(f"  [DEBUG _notify] from_email = '{from_email}'")
+    print(f"  [DEBUG _notify] RESEND_API_KEY exists = {bool(api_key)}, len = {len(api_key)}, source = {'env' if os.environ.get('RESEND_API_KEY') else 'config'}")
     try:
         import urllib.request
         payload = json.dumps({
@@ -1422,6 +1424,9 @@ def _send_match_email(to_email, course_name, time_display, date_display,
                       from_email="GreenLight <onboarding@resend.dev>"):
     """Send match notification email via Resend (HTML)."""
     api_key = os.environ.get("RESEND_API_KEY", "")
+    print(f"    [DEBUG _send_match_email] from_email = '{from_email}'")
+    print(f"    [DEBUG _send_match_email] RESEND_API_KEY exists = {bool(api_key)}, len = {len(api_key)}")
+    print(f"    [DEBUG _send_match_email] to_email = '{to_email}'")
     if not api_key or api_key.startswith("re_YOUR"):
         print("    Email: no Resend API key configured")
         return False
