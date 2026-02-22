@@ -29,7 +29,15 @@
       "Bash(\"/c/Program Files/GitHub CLI/gh.exe\" workflow disable scan.yml)",
       "Bash(\"/c/Program Files/GitHub CLI/gh.exe\" workflow list)",
       "Bash(\"/c/Program Files/GitHub CLI/gh.exe\" workflow list --all)",
-      "Bash(git add:*)"
+      "Bash(git add:*)",
+      "Bash(npm create:*)",
+      "Bash(npm install:*)",
+      "Bash(npx tsc:*)",
+      "Bash(npx vite:*)",
+      "Bash(echo:*)",
+      "Bash(dir:*)",
+      "Bash(npm run dev:*)",
+      "Bash(cd /c/Users/sylva/greenlight/web && npm run build 2>&1)"
     ]
   }
 }

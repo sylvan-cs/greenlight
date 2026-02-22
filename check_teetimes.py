@@ -266,6 +266,9 @@ def run(scan_all=False):
     # Sync to Supabase
     _sync_to_supabase(all_results, active_courses)
 
+    # Check for matching rounds and send SMS alerts
+    _check_round_matches()
+
 
 # =========================================================================
 # GolfNow
@@ -1375,6 +1378,267 @@ def _notify(all_results, config):
             print(f"  Email sent: {result.get('id', 'ok')}")
     except Exception as e:
         print(f"  Email send failed: {e}")
+
+
+def _format_time_ampm(time_24):
+    """Convert 'HH:MM' to '7:30 AM' format."""
+    try:
+        dt = datetime.strptime(time_24, "%H:%M")
+        return dt.strftime("%I:%M %p").lstrip("0")
+    except Exception:
+        return time_24
+
+
+def _format_date_friendly(date_str):
+    """Convert 'YYYY-MM-DD' to 'Sat, Mar 15' format."""
+    try:
+        dt = datetime.strptime(date_str, "%Y-%m-%d")
+        # strftime %e not available on all platforms, use lstrip
+        day = dt.strftime("%d").lstrip("0")
+        return dt.strftime(f"%a, %b {day}")
+    except Exception:
+        return date_str
+
+
+def _send_sms(twilio_sid, twilio_token, twilio_phone, to_phone, message):
+    """Send an SMS via Twilio. Returns True on success."""
+    try:
+        from twilio.rest import Client
+        client = Client(twilio_sid, twilio_token)
+        msg = client.messages.create(
+            body=message,
+            from_=twilio_phone,
+            to=to_phone,
+        )
+        print(f"    Twilio: sent {msg.sid}")
+        return True
+    except Exception as e:
+        print(f"    Twilio error: {e}")
+        return False
+
+
+def _send_match_email(to_email, course_name, time_display, date_display,
+                      spots_display, booking_url, round_id):
+    """Send match notification email via Resend as fallback when no phone number."""
+    api_key = os.environ.get("RESEND_API_KEY", "")
+    if not api_key or api_key.startswith("re_YOUR"):
+        print("    Email fallback: no Resend API key configured")
+        return
+
+    spots_text = f"{spots_display} spots available" if spots_display else "Spots available"
+    subject = f"Tee time found: {time_display} at {course_name}"
+    body = (
+        f"🏌️ The Starter found a match!\n\n"
+        f"{time_display} at {course_name} on {date_display} — {spots_text}!\n\n"
+        f"Book now: {booking_url}\n"
+        f"Round: https://the-starter.vercel.app/round/{round_id}\n"
+    )
+
+    try:
+        import urllib.request
+        payload = json.dumps({
+            "from": "The Starter <onboarding@resend.dev>",
+            "to": [to_email],
+            "subject": subject,
+            "text": body,
+        }).encode()
+        req = urllib.request.Request(
+            "https://api.resend.com/emails",
+            data=payload,
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+                "User-Agent": "TheStarter/1.0",
+            },
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            result = json.loads(resp.read())
+            print(f"    Email fallback sent: {result.get('id', 'ok')}")
+    except Exception as e:
+        print(f"    Email fallback failed: {e}")
+
+
+def _check_round_matches():
+    """Check for matching tee times for open watching rounds and send notifications."""
+    supabase_url = os.environ.get("SUPABASE_URL", "")
+    supabase_key = os.environ.get("SUPABASE_SERVICE_KEY", "")
+    twilio_sid = os.environ.get("TWILIO_ACCOUNT_SID", "")
+    twilio_token = os.environ.get("TWILIO_AUTH_TOKEN", "")
+    twilio_phone = os.environ.get("TWILIO_PHONE_NUMBER", "")
+
+    if not supabase_url or not supabase_key:
+        print("\nMatching: skipping (Supabase not configured)")
+        return
+
+    try:
+        from supabase import create_client
+        sb = create_client(supabase_url, supabase_key)
+
+        today = datetime.now().strftime("%Y-%m-%d")
+
+        # Query open watching rounds (no match yet, not past)
+        rounds_resp = (
+            sb.table("rounds")
+            .select("*")
+            .eq("status", "open")
+            .eq("has_specific_time", False)
+            .gte("round_date", today)
+            .is_("matched_tee_time_id", "null")
+            .execute()
+        )
+
+        open_rounds = rounds_resp.data or []
+        print(f"\nMatching: checking {len(open_rounds)} open rounds...")
+
+        if not open_rounds:
+            return
+
+        sms_sent = 0
+        MAX_SMS_PER_CYCLE = 5
+
+        for round_data in open_rounds:
+            if sms_sent >= MAX_SMS_PER_CYCLE:
+                print(f"  Rate limit reached ({MAX_SMS_PER_CYCLE} SMS), stopping")
+                break
+
+            round_id = round_data["id"]
+
+            # Get round's courses
+            rc_resp = (
+                sb.table("round_courses")
+                .select("course_id")
+                .eq("round_id", round_id)
+                .execute()
+            )
+            course_ids = [rc["course_id"] for rc in (rc_resp.data or [])]
+            if not course_ids:
+                continue
+
+            # Query matching tee times
+            tt_resp = (
+                sb.table("tee_times")
+                .select("*")
+                .in_("course_id", course_ids)
+                .eq("tee_date", round_data["round_date"])
+                .gte("tee_time", round_data["time_window_start"])
+                .lte("tee_time", round_data["time_window_end"])
+                .eq("is_available", True)
+                .order("tee_time")
+                .limit(20)
+                .execute()
+            )
+
+            # Filter by spots_needed (spots_available can be null = unlimited)
+            spots_needed = round_data.get("spots_needed", 1)
+            match = None
+            for tt in (tt_resp.data or []):
+                if tt.get("spots_available") is None or tt["spots_available"] >= spots_needed:
+                    match = tt
+                    break
+
+            if not match:
+                continue
+
+            print(f"  Round {round_id} matched with tee time {match['id']}")
+
+            # Update round status
+            now_iso = datetime.now(timezone.utc).isoformat()
+            sb.table("rounds").update({
+                "matched_tee_time_id": match["id"],
+                "status": "found",
+                "matched_at": now_iso,
+            }).eq("id", round_id).execute()
+
+            # Get creator profile
+            creator_resp = (
+                sb.table("profiles")
+                .select("full_name, phone")
+                .eq("id", round_data["creator_id"])
+                .single()
+                .execute()
+            )
+            creator = creator_resp.data
+
+            # Get course name
+            course_resp = (
+                sb.table("courses")
+                .select("name")
+                .eq("id", match["course_id"])
+                .single()
+                .execute()
+            )
+            course_name = course_resp.data["name"] if course_resp.data else "Unknown Course"
+
+            # Format display values
+            time_display = _format_time_ampm(match["tee_time"])
+            date_display = _format_date_friendly(round_data["round_date"])
+            spots_display = match.get("spots_available")
+            booking_url = match.get("booking_link", "")
+            spots_text = f"{spots_display} spots available" if spots_display else "Spots available"
+
+            # Send SMS to creator
+            if creator and creator.get("phone") and twilio_sid and twilio_token and twilio_phone:
+                message = (
+                    f"\U0001f3cc\ufe0f The Starter: {time_display} at {course_name} "
+                    f"on {date_display} \u2014 {spots_text}!\n"
+                    f"Book now: {booking_url}\n"
+                    f"Round: https://the-starter.vercel.app/round/{round_id}"
+                )
+                if _send_sms(twilio_sid, twilio_token, twilio_phone, creator["phone"], message):
+                    sms_sent += 1
+            elif creator and not creator.get("phone"):
+                # Fall back to email via Resend
+                # Get email from auth admin API
+                try:
+                    user_resp = sb.auth.admin.get_user_by_id(round_data["creator_id"])
+                    user_email = user_resp.user.email if user_resp and user_resp.user else None
+                    if user_email:
+                        _send_match_email(
+                            user_email, course_name, time_display,
+                            date_display, spots_display, booking_url, round_id,
+                        )
+                except Exception as e:
+                    print(f"    Could not get user email for fallback: {e}")
+
+            # Notify RSVPs
+            rsvp_resp = (
+                sb.table("rsvps")
+                .select("user_id, name")
+                .eq("round_id", round_id)
+                .eq("status", "in")
+                .execute()
+            )
+
+            creator_name = (creator.get("full_name") or "Someone") if creator else "Someone"
+
+            for rsvp in (rsvp_resp.data or []):
+                if sms_sent >= MAX_SMS_PER_CYCLE:
+                    break
+                if not rsvp.get("user_id"):
+                    continue  # Guest RSVP, can't notify by SMS
+
+                rsvp_profile_resp = (
+                    sb.table("profiles")
+                    .select("phone")
+                    .eq("id", rsvp["user_id"])
+                    .single()
+                    .execute()
+                )
+                rsvp_profile = rsvp_profile_resp.data
+
+                if rsvp_profile and rsvp_profile.get("phone") and twilio_sid and twilio_token:
+                    rsvp_message = (
+                        f"\U0001f3cc\ufe0f {creator_name} found a tee time! "
+                        f"{time_display} at {course_name} on {date_display}. "
+                        f"Check it out: https://the-starter.vercel.app/r/{round_data['share_code']}"
+                    )
+                    if _send_sms(twilio_sid, twilio_token, twilio_phone, rsvp_profile["phone"], rsvp_message):
+                        sms_sent += 1
+
+        print(f"  Matching complete. {sms_sent} SMS sent this cycle.")
+
+    except Exception as e:
+        print(f"\nMatching error: {e}")
 
 
 if __name__ == "__main__":
