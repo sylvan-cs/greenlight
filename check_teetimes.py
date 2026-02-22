@@ -1418,7 +1418,8 @@ def _send_sms(twilio_sid, twilio_token, twilio_phone, to_phone, message):
 
 
 def _send_match_email(to_email, course_name, time_display, date_display,
-                      price_display, spots_display, booking_url, round_id):
+                      price_display, spots_display, booking_url, round_id,
+                      from_email="GreenLight <onboarding@resend.dev>"):
     """Send match notification email via Resend (HTML)."""
     api_key = os.environ.get("RESEND_API_KEY", "")
     if not api_key or api_key.startswith("re_YOUR"):
@@ -1463,7 +1464,7 @@ def _send_match_email(to_email, course_name, time_display, date_display,
     try:
         import urllib.request
         payload = json.dumps({
-            "from": "The Starter <onboarding@resend.dev>",
+            "from": from_email,
             "to": [to_email],
             "subject": subject,
             "html": html,
@@ -1474,7 +1475,7 @@ def _send_match_email(to_email, course_name, time_display, date_display,
             headers={
                 "Authorization": f"Bearer {api_key}",
                 "Content-Type": "application/json",
-                "User-Agent": "TheStarter/1.0",
+                "User-Agent": "GreenLight/1.0",
             },
         )
         with urllib.request.urlopen(req, timeout=10) as resp:
@@ -1487,7 +1488,8 @@ def _send_match_email(to_email, course_name, time_display, date_display,
 
 
 def _send_rsvp_email(to_email, creator_name, time_display, course_name,
-                     date_display, share_code):
+                     date_display, share_code,
+                     from_email="GreenLight <onboarding@resend.dev>"):
     """Send RSVP notification email via Resend."""
     api_key = os.environ.get("RESEND_API_KEY", "")
     if not api_key or api_key.startswith("re_YOUR"):
@@ -1507,7 +1509,7 @@ def _send_rsvp_email(to_email, creator_name, time_display, course_name,
     try:
         import urllib.request
         payload = json.dumps({
-            "from": "The Starter <onboarding@resend.dev>",
+            "from": from_email,
             "to": [to_email],
             "subject": subject,
             "html": html,
@@ -1518,7 +1520,7 @@ def _send_rsvp_email(to_email, creator_name, time_display, course_name,
             headers={
                 "Authorization": f"Bearer {api_key}",
                 "Content-Type": "application/json",
-                "User-Agent": "TheStarter/1.0",
+                "User-Agent": "GreenLight/1.0",
             },
         )
         with urllib.request.urlopen(req, timeout=10) as resp:
@@ -1537,6 +1539,11 @@ def _check_round_matches():
     twilio_sid = os.environ.get("TWILIO_ACCOUNT_SID", "")
     twilio_token = os.environ.get("TWILIO_AUTH_TOKEN", "")
     twilio_phone = os.environ.get("TWILIO_PHONE_NUMBER", "")
+
+    # Load from_email from config (same source as the working alert email)
+    config = _load_config()
+    notify_cfg = config.get("notify", {}) if config else {}
+    from_email = notify_cfg.get("from_email", "GreenLight <onboarding@resend.dev>")
 
     if not supabase_url or not supabase_key:
         print("\nMatching: skipping (Supabase not configured)")
@@ -1659,6 +1666,7 @@ def _check_round_matches():
                 creator_notified = _send_match_email(
                     creator_email, course_name, time_display, date_display,
                     price_display, spots_display, booking_url, round_id,
+                    from_email=from_email,
                 )
 
             if not creator_notified and creator and creator.get("phone") and twilio_sid and twilio_token and twilio_phone:
@@ -1699,6 +1707,7 @@ def _check_round_matches():
                     rsvp_notified = _send_rsvp_email(
                         rsvp_email, creator_name, time_display, course_name,
                         date_display, round_data["share_code"],
+                        from_email=from_email,
                     )
 
                 if not rsvp_notified and twilio_sid and twilio_token and twilio_phone:
