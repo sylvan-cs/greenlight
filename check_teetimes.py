@@ -1434,37 +1434,18 @@ def _send_match_email(to_email, course_name, time_display, date_display,
     spots_text = f"{spots_display} available" if spots_display else "Available"
     subject = f"\U0001f3cc\ufe0f Tee time found! {time_display} at {course_name}"
 
-    price_row = ""
-    if price_display:
-        price_row = (
-            '<tr><td style="padding: 6px 0; color: #666; font-size: 14px;">Price</td>'
-            f'<td style="padding: 6px 0; font-size: 14px; font-weight: 600; text-align: right;">{price_display}</td></tr>'
-        )
-
-    html = (
-        '<div style="font-family: -apple-system, BlinkMacSystemFont, \'Segoe UI\', Roboto, sans-serif; max-width: 480px; margin: 0 auto; padding: 24px;">'
-        '<p style="color: #333; font-size: 16px; margin: 0 0 20px;">A tee time matching your round just opened up!</p>'
-        '<div style="background: #f8f8f8; border-radius: 12px; padding: 20px; margin-bottom: 24px;">'
-        '<table style="width: 100%; border-collapse: collapse;">'
-        '<tr><td style="padding: 6px 0; color: #666; font-size: 14px;">Time</td>'
-        f'<td style="padding: 6px 0; font-size: 14px; font-weight: 600; text-align: right;">{time_display}</td></tr>'
-        '<tr><td style="padding: 6px 0; color: #666; font-size: 14px;">Course</td>'
-        f'<td style="padding: 6px 0; font-size: 14px; font-weight: 600; text-align: right;">{course_name}</td></tr>'
-        '<tr><td style="padding: 6px 0; color: #666; font-size: 14px;">Date</td>'
-        f'<td style="padding: 6px 0; font-size: 14px; font-weight: 600; text-align: right;">{date_display}</td></tr>'
-        f'{price_row}'
-        '<tr><td style="padding: 6px 0; color: #666; font-size: 14px;">Spots</td>'
-        f'<td style="padding: 6px 0; font-size: 14px; font-weight: 600; text-align: right;">{spots_text}</td></tr>'
-        '</table>'
-        '</div>'
-        '<div style="text-align: center; margin-bottom: 12px;">'
-        f'<a href="{booking_url}" style="display: inline-block; background: #22C55E; color: white; text-decoration: none; padding: 12px 32px; border-radius: 8px; font-size: 16px; font-weight: 600;">Book This Time</a>'
-        '</div>'
-        '<div style="text-align: center;">'
-        f'<a href="https://the-starter.vercel.app/round/{round_id}" style="display: inline-block; color: #22C55E; text-decoration: none; padding: 8px 24px; font-size: 14px;">View Your Round</a>'
-        '</div>'
-        '</div>'
+    # Build plain-text version (same "text" key as working _notify)
+    text = (
+        f"A tee time matching your round just opened up!\n\n"
+        f"Time: {time_display}\n"
+        f"Course: {course_name}\n"
+        f"Date: {date_display}\n"
     )
+    if price_display:
+        text += f"Price: {price_display}\n"
+    text += f"Spots: {spots_text}\n"
+    text += f"\nBook now: {booking_url}\n"
+    text += f"View your round: https://the-starter.vercel.app/round/{round_id}\n"
 
     try:
         import urllib.request
@@ -1472,7 +1453,7 @@ def _send_match_email(to_email, course_name, time_display, date_display,
             "from": from_email,
             "to": [to_email],
             "subject": subject,
-            "html": html,
+            "text": text,
         }).encode()
         req = urllib.request.Request(
             "https://api.resend.com/emails",
@@ -1485,7 +1466,7 @@ def _send_match_email(to_email, course_name, time_display, date_display,
         )
         with urllib.request.urlopen(req, timeout=10) as resp:
             result = json.loads(resp.read())
-            print(f"    Email notification sent to {to_email}")
+            print(f"    Email sent: {result.get('id', 'ok')}")
             return True
     except Exception as e:
         print(f"    Email send failed: {e}")
@@ -1502,13 +1483,9 @@ def _send_rsvp_email(to_email, creator_name, time_display, course_name,
 
     subject = f"{creator_name} found a tee time!"
     share_link = f"https://the-starter.vercel.app/r/{share_code}"
-    html = (
-        '<div style="font-family: -apple-system, BlinkMacSystemFont, \'Segoe UI\', Roboto, sans-serif; max-width: 480px; margin: 0 auto; padding: 24px;">'
-        f'<p style="color: #333; font-size: 16px; margin: 0 0 20px;">{creator_name} found a {time_display} tee time at {course_name} on {date_display}.</p>'
-        '<div style="text-align: center;">'
-        f'<a href="{share_link}" style="display: inline-block; background: #22C55E; color: white; text-decoration: none; padding: 12px 32px; border-radius: 8px; font-size: 16px; font-weight: 600;">Check It Out</a>'
-        '</div>'
-        '</div>'
+    text = (
+        f"{creator_name} found a {time_display} tee time at {course_name} on {date_display}.\n\n"
+        f"Check it out: {share_link}\n"
     )
 
     try:
@@ -1517,7 +1494,7 @@ def _send_rsvp_email(to_email, creator_name, time_display, course_name,
             "from": from_email,
             "to": [to_email],
             "subject": subject,
-            "html": html,
+            "text": text,
         }).encode()
         req = urllib.request.Request(
             "https://api.resend.com/emails",
@@ -1530,7 +1507,7 @@ def _send_rsvp_email(to_email, creator_name, time_display, course_name,
         )
         with urllib.request.urlopen(req, timeout=10) as resp:
             result = json.loads(resp.read())
-            print(f"    Email notification sent to {to_email}")
+            print(f"    Email sent: {result.get('id', 'ok')}")
             return True
     except Exception as e:
         print(f"    Email send failed: {e}")
