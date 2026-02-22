@@ -266,7 +266,7 @@ def run(scan_all=False):
     # Sync to Supabase
     _sync_to_supabase(all_results, active_courses)
 
-    # Check for matching rounds and send SMS alerts
+    # Check for matching rounds and send email/SMS alerts
     _check_round_matches()
 
 
@@ -1418,20 +1418,46 @@ def _send_sms(twilio_sid, twilio_token, twilio_phone, to_phone, message):
 
 
 def _send_match_email(to_email, course_name, time_display, date_display,
-                      spots_display, booking_url, round_id):
-    """Send match notification email via Resend as fallback when no phone number."""
+                      price_display, spots_display, booking_url, round_id):
+    """Send match notification email via Resend (HTML)."""
     api_key = os.environ.get("RESEND_API_KEY", "")
     if not api_key or api_key.startswith("re_YOUR"):
-        print("    Email fallback: no Resend API key configured")
-        return
+        print("    Email: no Resend API key configured")
+        return False
 
-    spots_text = f"{spots_display} spots available" if spots_display else "Spots available"
-    subject = f"Tee time found: {time_display} at {course_name}"
-    body = (
-        f"🏌️ The Starter found a match!\n\n"
-        f"{time_display} at {course_name} on {date_display} — {spots_text}!\n\n"
-        f"Book now: {booking_url}\n"
-        f"Round: https://the-starter.vercel.app/round/{round_id}\n"
+    spots_text = f"{spots_display} available" if spots_display else "Available"
+    subject = f"\U0001f3cc\ufe0f Tee time found! {time_display} at {course_name}"
+
+    price_row = ""
+    if price_display:
+        price_row = (
+            '<tr><td style="padding: 6px 0; color: #666; font-size: 14px;">Price</td>'
+            f'<td style="padding: 6px 0; font-size: 14px; font-weight: 600; text-align: right;">{price_display}</td></tr>'
+        )
+
+    html = (
+        '<div style="font-family: -apple-system, BlinkMacSystemFont, \'Segoe UI\', Roboto, sans-serif; max-width: 480px; margin: 0 auto; padding: 24px;">'
+        '<p style="color: #333; font-size: 16px; margin: 0 0 20px;">A tee time matching your round just opened up!</p>'
+        '<div style="background: #f8f8f8; border-radius: 12px; padding: 20px; margin-bottom: 24px;">'
+        '<table style="width: 100%; border-collapse: collapse;">'
+        '<tr><td style="padding: 6px 0; color: #666; font-size: 14px;">Time</td>'
+        f'<td style="padding: 6px 0; font-size: 14px; font-weight: 600; text-align: right;">{time_display}</td></tr>'
+        '<tr><td style="padding: 6px 0; color: #666; font-size: 14px;">Course</td>'
+        f'<td style="padding: 6px 0; font-size: 14px; font-weight: 600; text-align: right;">{course_name}</td></tr>'
+        '<tr><td style="padding: 6px 0; color: #666; font-size: 14px;">Date</td>'
+        f'<td style="padding: 6px 0; font-size: 14px; font-weight: 600; text-align: right;">{date_display}</td></tr>'
+        f'{price_row}'
+        '<tr><td style="padding: 6px 0; color: #666; font-size: 14px;">Spots</td>'
+        f'<td style="padding: 6px 0; font-size: 14px; font-weight: 600; text-align: right;">{spots_text}</td></tr>'
+        '</table>'
+        '</div>'
+        '<div style="text-align: center; margin-bottom: 12px;">'
+        f'<a href="{booking_url}" style="display: inline-block; background: #22C55E; color: white; text-decoration: none; padding: 12px 32px; border-radius: 8px; font-size: 16px; font-weight: 600;">Book This Time</a>'
+        '</div>'
+        '<div style="text-align: center;">'
+        f'<a href="https://the-starter.vercel.app/round/{round_id}" style="display: inline-block; color: #22C55E; text-decoration: none; padding: 8px 24px; font-size: 14px;">View Your Round</a>'
+        '</div>'
+        '</div>'
     )
 
     try:
@@ -1440,7 +1466,7 @@ def _send_match_email(to_email, course_name, time_display, date_display,
             "from": "The Starter <onboarding@resend.dev>",
             "to": [to_email],
             "subject": subject,
-            "text": body,
+            "html": html,
         }).encode()
         req = urllib.request.Request(
             "https://api.resend.com/emails",
@@ -1453,9 +1479,55 @@ def _send_match_email(to_email, course_name, time_display, date_display,
         )
         with urllib.request.urlopen(req, timeout=10) as resp:
             result = json.loads(resp.read())
-            print(f"    Email fallback sent: {result.get('id', 'ok')}")
+            print(f"    Email notification sent to {to_email}")
+            return True
     except Exception as e:
-        print(f"    Email fallback failed: {e}")
+        print(f"    Email send failed: {e}")
+        return False
+
+
+def _send_rsvp_email(to_email, creator_name, time_display, course_name,
+                     date_display, share_code):
+    """Send RSVP notification email via Resend."""
+    api_key = os.environ.get("RESEND_API_KEY", "")
+    if not api_key or api_key.startswith("re_YOUR"):
+        return False
+
+    subject = f"{creator_name} found a tee time!"
+    share_link = f"https://the-starter.vercel.app/r/{share_code}"
+    html = (
+        '<div style="font-family: -apple-system, BlinkMacSystemFont, \'Segoe UI\', Roboto, sans-serif; max-width: 480px; margin: 0 auto; padding: 24px;">'
+        f'<p style="color: #333; font-size: 16px; margin: 0 0 20px;">{creator_name} found a {time_display} tee time at {course_name} on {date_display}.</p>'
+        '<div style="text-align: center;">'
+        f'<a href="{share_link}" style="display: inline-block; background: #22C55E; color: white; text-decoration: none; padding: 12px 32px; border-radius: 8px; font-size: 16px; font-weight: 600;">Check It Out</a>'
+        '</div>'
+        '</div>'
+    )
+
+    try:
+        import urllib.request
+        payload = json.dumps({
+            "from": "The Starter <onboarding@resend.dev>",
+            "to": [to_email],
+            "subject": subject,
+            "html": html,
+        }).encode()
+        req = urllib.request.Request(
+            "https://api.resend.com/emails",
+            data=payload,
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+                "User-Agent": "TheStarter/1.0",
+            },
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            result = json.loads(resp.read())
+            print(f"    Email notification sent to {to_email}")
+            return True
+    except Exception as e:
+        print(f"    Email send failed: {e}")
+        return False
 
 
 def _check_round_matches():
@@ -1497,10 +1569,6 @@ def _check_round_matches():
         MAX_SMS_PER_CYCLE = 5
 
         for round_data in open_rounds:
-            if sms_sent >= MAX_SMS_PER_CYCLE:
-                print(f"  Rate limit reached ({MAX_SMS_PER_CYCLE} SMS), stopping")
-                break
-
             round_id = round_data["id"]
 
             # Get round's courses
@@ -1576,8 +1644,24 @@ def _check_round_matches():
             booking_url = match.get("booking_link", "")
             spots_text = f"{spots_display} spots available" if spots_display else "Spots available"
 
-            # Send SMS to creator
-            if creator and creator.get("phone") and twilio_sid and twilio_token and twilio_phone:
+            # Notify creator — email first, SMS fallback
+            creator_email = None
+            try:
+                user_resp = sb.auth.admin.get_user_by_id(round_data["creator_id"])
+                creator_email = user_resp.user.email if user_resp and user_resp.user else None
+            except Exception as e:
+                print(f"    Could not get creator email: {e}")
+
+            price_display = match.get("price_label", "")
+            creator_notified = False
+
+            if creator_email:
+                creator_notified = _send_match_email(
+                    creator_email, course_name, time_display, date_display,
+                    price_display, spots_display, booking_url, round_id,
+                )
+
+            if not creator_notified and creator and creator.get("phone") and twilio_sid and twilio_token and twilio_phone:
                 message = (
                     f"\U0001f3cc\ufe0f The Starter: {time_display} at {course_name} "
                     f"on {date_display} \u2014 {spots_text}!\n"
@@ -1586,19 +1670,6 @@ def _check_round_matches():
                 )
                 if _send_sms(twilio_sid, twilio_token, twilio_phone, creator["phone"], message):
                     sms_sent += 1
-            elif creator and not creator.get("phone"):
-                # Fall back to email via Resend
-                # Get email from auth admin API
-                try:
-                    user_resp = sb.auth.admin.get_user_by_id(round_data["creator_id"])
-                    user_email = user_resp.user.email if user_resp and user_resp.user else None
-                    if user_email:
-                        _send_match_email(
-                            user_email, course_name, time_display,
-                            date_display, spots_display, booking_url, round_id,
-                        )
-                except Exception as e:
-                    print(f"    Could not get user email for fallback: {e}")
 
             # Notify RSVPs
             rsvp_resp = (
@@ -1612,28 +1683,43 @@ def _check_round_matches():
             creator_name = (creator.get("full_name") or "Someone") if creator else "Someone"
 
             for rsvp in (rsvp_resp.data or []):
-                if sms_sent >= MAX_SMS_PER_CYCLE:
-                    break
                 if not rsvp.get("user_id"):
-                    continue  # Guest RSVP, can't notify by SMS
+                    continue  # Guest RSVP, can't notify
 
-                rsvp_profile_resp = (
-                    sb.table("profiles")
-                    .select("phone")
-                    .eq("id", rsvp["user_id"])
-                    .single()
-                    .execute()
-                )
-                rsvp_profile = rsvp_profile_resp.data
+                # Get RSVP user's email from auth.users
+                rsvp_email = None
+                try:
+                    rsvp_user_resp = sb.auth.admin.get_user_by_id(rsvp["user_id"])
+                    rsvp_email = rsvp_user_resp.user.email if rsvp_user_resp and rsvp_user_resp.user else None
+                except Exception:
+                    pass
 
-                if rsvp_profile and rsvp_profile.get("phone") and twilio_sid and twilio_token:
-                    rsvp_message = (
-                        f"\U0001f3cc\ufe0f {creator_name} found a tee time! "
-                        f"{time_display} at {course_name} on {date_display}. "
-                        f"Check it out: https://the-starter.vercel.app/r/{round_data['share_code']}"
+                rsvp_notified = False
+                if rsvp_email:
+                    rsvp_notified = _send_rsvp_email(
+                        rsvp_email, creator_name, time_display, course_name,
+                        date_display, round_data["share_code"],
                     )
-                    if _send_sms(twilio_sid, twilio_token, twilio_phone, rsvp_profile["phone"], rsvp_message):
-                        sms_sent += 1
+
+                if not rsvp_notified and twilio_sid and twilio_token and twilio_phone:
+                    if sms_sent >= MAX_SMS_PER_CYCLE:
+                        break
+                    rsvp_profile_resp = (
+                        sb.table("profiles")
+                        .select("phone")
+                        .eq("id", rsvp["user_id"])
+                        .single()
+                        .execute()
+                    )
+                    rsvp_profile = rsvp_profile_resp.data
+                    if rsvp_profile and rsvp_profile.get("phone"):
+                        rsvp_message = (
+                            f"\U0001f3cc\ufe0f {creator_name} found a tee time! "
+                            f"{time_display} at {course_name} on {date_display}. "
+                            f"Check it out: https://the-starter.vercel.app/r/{round_data['share_code']}"
+                        )
+                        if _send_sms(twilio_sid, twilio_token, twilio_phone, rsvp_profile["phone"], rsvp_message):
+                            sms_sent += 1
 
         print(f"  Matching complete. {sms_sent} SMS sent this cycle.")
 
