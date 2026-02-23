@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { formatDateShort, formatTime, getTimeWindowLabel } from '../lib/helpers'
 import Avatar from '../components/Avatar'
-import type { RoundWithDetails, Rsvp } from '../lib/types'
+import type { RoundWithDetails, Rsvp, TeeTime } from '../lib/types'
 
 function StatusBadge({ status }: { status: string }) {
   const config: Record<string, { text: string; bg: string; color: string; border?: string }> = {
@@ -49,6 +49,7 @@ export default function RoundDetail() {
   const [cancelling, setCancelling] = useState(false)
   const [bookingClicked, setBookingClicked] = useState(false)
   const [confirming, setConfirming] = useState(false)
+  const [matchedTeeTime, setMatchedTeeTime] = useState<TeeTime | null>(null)
 
   useEffect(() => {
     if (!id) return
@@ -66,6 +67,16 @@ export default function RoundDetail() {
 
       if (!error && data) {
         setRound(data as RoundWithDetails)
+
+        // Fetch matched tee time if available
+        if (data.matched_tee_time_id) {
+          const { data: ttData } = await supabase
+            .from('tee_times')
+            .select('*, courses(*)')
+            .eq('id', data.matched_tee_time_id)
+            .single()
+          if (ttData) setMatchedTeeTime(ttData as TeeTime)
+        }
       }
       setLoading(false)
     }
@@ -209,6 +220,76 @@ export default function RoundDetail() {
       <p className="text-text-secondary" style={{ fontSize: 14, marginBottom: 24 }}>
         {formatDateShort(round.round_date)} &middot; {timeLabel}
       </p>
+
+      {/* ── Match Found Card (auto-matched tee time) ── */}
+      {round.status === 'found' && matchedTeeTime && !round.has_specific_time && (
+        <div
+          style={{
+            backgroundColor: 'rgba(34,197,94,0.06)',
+            border: '1px solid rgba(34,197,94,0.25)',
+            borderRadius: 16,
+            padding: 20,
+            marginBottom: 24,
+          }}
+        >
+          <div className="flex items-center" style={{ gap: 8, marginBottom: 16 }}>
+            <FlagIcon size={16} />
+            <span className="text-green-primary font-semibold" style={{ fontSize: 14 }}>
+              Match Found!
+            </span>
+          </div>
+
+          <p className="text-white font-bold" style={{ fontSize: 17, marginBottom: 4 }}>
+            {formatTime(matchedTeeTime.tee_time)} at {matchedTeeTime.courses?.name ?? 'Unknown Course'}
+          </p>
+          <p className="text-text-secondary" style={{ fontSize: 14, marginBottom: 20 }}>
+            {formatDateShort(matchedTeeTime.tee_date)}
+            {matchedTeeTime.price_label ? ` \u00b7 ${matchedTeeTime.price_label}` : ''}
+          </p>
+
+          {!bookingClicked ? (
+            <>
+              <button
+                onClick={() => matchedTeeTime.courses?.booking_url && handleBook(matchedTeeTime.courses.booking_url)}
+                disabled={!matchedTeeTime.courses?.booking_url}
+                className="w-full flex items-center justify-center bg-green-primary hover:bg-green-hover text-white font-bold transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                style={{ gap: 8, height: 52, borderRadius: 14, fontSize: 16, marginBottom: 8 }}
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+                  <polyline points="15 3 21 3 21 9" />
+                  <line x1="10" y1="14" x2="21" y2="3" />
+                </svg>
+                Book This Time
+              </button>
+              <p className="text-text-secondary text-center" style={{ fontSize: 13 }}>
+                You'll complete the booking on {matchedTeeTime.courses?.name ?? 'the course'}'s site
+              </p>
+            </>
+          ) : (
+            <>
+              <button
+                onClick={handleConfirmBooking}
+                disabled={confirming}
+                className="w-full flex items-center justify-center bg-green-primary hover:bg-green-hover text-white font-bold transition-colors disabled:opacity-50"
+                style={{ gap: 8, height: 52, borderRadius: 14, fontSize: 16, marginBottom: 8 }}
+              >
+                {confirming ? 'Confirming...' : (
+                  <>
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                      <polyline points="20 6 9 17 4 12" />
+                    </svg>
+                    Confirm Booking
+                  </>
+                )}
+              </button>
+              <p className="text-text-secondary text-center" style={{ fontSize: 13 }}>
+                Done booking? Confirm to let your crew know.
+              </p>
+            </>
+          )}
+        </div>
+      )}
 
       {/* ── Tee Time Card (specific time selected or found) ── */}
       {round.has_specific_time && round.specific_tee_time && round.status !== 'cancelled' && (

@@ -1430,21 +1430,22 @@ def _send_match_email(to_email, course_name, time_display, date_display,
         print("    Email: no Resend API key configured")
         return False
 
-    spots_text = f"{spots_display} available" if spots_display else "Available"
     subject = f"\U0001f3cc\ufe0f Tee time found! {time_display} at {course_name}"
 
-    # Build plain-text version (same "text" key as working _notify)
-    text = (
-        f"A tee time matching your round just opened up!\n\n"
-        f"Time: {time_display}\n"
-        f"Course: {course_name}\n"
-        f"Date: {date_display}\n"
-    )
+    # Build detail line: "Wed, Feb 25 · $30.00 · 4 spots"
+    details = date_display
     if price_display:
-        text += f"Price: {price_display}\n"
-    text += f"Spots: {spots_text}\n"
-    text += f"\nBook now: {booking_url}\n"
-    text += f"View your round: https://the-starter.vercel.app/round/{round_id}\n"
+        details += f" \u00b7 {price_display}"
+    if spots_display:
+        details += f" \u00b7 {spots_display} spots"
+
+    text = (
+        f"\U0001f3cc\ufe0f Tee time found for your round!\n\n"
+        f"{time_display} at {course_name}\n"
+        f"{details}\n\n"
+        f"Book now: {booking_url}\n"
+        f"View round: https://the-starter.vercel.app/round/{round_id}\n"
+    )
 
     try:
         import urllib.request
@@ -1473,7 +1474,7 @@ def _send_match_email(to_email, course_name, time_display, date_display,
 
 
 def _send_rsvp_email(to_email, creator_name, time_display, course_name,
-                     date_display, share_code,
+                     date_display, share_code, price_display="",
                      from_email="GreenLight <onboarding@resend.dev>"):
     """Send RSVP notification email via Resend."""
     api_key = os.environ.get("RESEND_API_KEY", "")
@@ -1482,11 +1483,18 @@ def _send_rsvp_email(to_email, creator_name, time_display, course_name,
     if not api_key or api_key.startswith("re_YOUR"):
         return False
 
-    subject = f"{creator_name} found a tee time!"
+    subject = f"\U0001f3cc\ufe0f {creator_name} found a tee time!"
     share_link = f"https://the-starter.vercel.app/r/{share_code}"
+
+    details = date_display
+    if price_display:
+        details += f" \u00b7 {price_display}"
+
     text = (
-        f"{creator_name} found a {time_display} tee time at {course_name} on {date_display}.\n\n"
-        f"Check it out: {share_link}\n"
+        f"\U0001f3cc\ufe0f {creator_name} found a tee time!\n\n"
+        f"{time_display} at {course_name}\n"
+        f"{details}\n\n"
+        f"View round: {share_link}\n"
     )
 
     try:
@@ -1652,10 +1660,18 @@ def _check_round_matches():
                     from_email=from_email,
                 )
 
+            # Build SMS detail line
+            sms_details = date_display
+            if price_display:
+                sms_details += f" \u00b7 {price_display}"
+            if spots_display:
+                sms_details += f" \u00b7 {spots_display} spots"
+
             if not creator_notified and creator and creator.get("phone") and twilio_sid and twilio_token and twilio_phone:
                 message = (
-                    f"\U0001f3cc\ufe0f The Starter: {time_display} at {course_name} "
-                    f"on {date_display} \u2014 {spots_text}!\n"
+                    f"\U0001f3cc\ufe0f Tee time found!\n"
+                    f"{time_display} at {course_name}\n"
+                    f"{sms_details}\n"
                     f"Book now: {booking_url}\n"
                     f"Round: https://the-starter.vercel.app/round/{round_id}"
                 )
@@ -1690,6 +1706,7 @@ def _check_round_matches():
                     rsvp_notified = _send_rsvp_email(
                         rsvp_email, creator_name, time_display, course_name,
                         date_display, round_data["share_code"],
+                        price_display=price_display,
                         from_email=from_email,
                     )
 
