@@ -70,11 +70,12 @@ export default function RoundDetail() {
 
         // Fetch matched tee time if available
         if (data.matched_tee_time_id) {
-          const { data: ttData } = await supabase
+          const { data: ttData, error: ttError } = await supabase
             .from('tee_times')
             .select('*, courses(*)')
             .eq('id', data.matched_tee_time_id)
             .single()
+          if (ttError) console.error('Failed to fetch matched tee time:', ttError)
           if (ttData) setMatchedTeeTime(ttData as TeeTime)
         }
       }
@@ -213,12 +214,14 @@ export default function RoundDetail() {
 
       {/* ── Course Names ── */}
       <p className="text-white font-display font-bold" style={{ fontSize: 20, marginBottom: 4 }}>
-        {courseNames.length > 0 ? courseNames.join(' or ') : 'No courses selected'}
+        {matchedTeeTime?.courses?.name ?? (courseNames.length > 0 ? courseNames.join(' or ') : 'No courses selected')}
       </p>
 
-      {/* ── Date · Time Window ── */}
+      {/* ── Date · Time (matched time or search window) ── */}
       <p className="text-text-secondary" style={{ fontSize: 14, marginBottom: 24 }}>
-        {formatDateShort(round.round_date)} &middot; {timeLabel}
+        {matchedTeeTime
+          ? `${formatDateShort(matchedTeeTime.tee_date)} \u00b7 ${formatTime(matchedTeeTime.tee_time)}`
+          : `${formatDateShort(round.round_date)} \u00b7 ${timeLabel}`}
       </p>
 
       {/* ── Match Found Card (auto-matched tee time) ── */}
