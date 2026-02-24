@@ -2,7 +2,7 @@ import { Link } from 'react-router-dom'
 
 export default function Welcome() {
   return (
-    <div className="flex flex-col items-center justify-center h-full px-6 w-full max-w-[480px] mx-auto">
+    <div className="relative flex flex-col items-center justify-center h-full px-6 w-full max-w-[480px] mx-auto">
       <div className="flex flex-col items-center gap-3 mb-20">
         <h1 className="font-display text-5xl font-bold tracking-tight">The Starter</h1>
         <p className="text-text-secondary text-lg">Stop texting. Start playing.</p>
@@ -22,6 +22,10 @@ export default function Welcome() {
         >
           Log In
         </Link>
+      </div>
+      <div className="absolute bottom-8 flex gap-4 text-text-secondary text-xs">
+        <Link to="/terms" className="hover:text-white transition-colors">Terms</Link>
+        <Link to="/privacy" className="hover:text-white transition-colors">Privacy</Link>
       </div>
     </div>
   )

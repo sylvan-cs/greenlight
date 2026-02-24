@@ -10,6 +10,8 @@ import StartRound from './pages/StartRound'
 import StartRoundWho from './pages/StartRoundWho'
 import RoundDetail from './pages/RoundDetail'
 import SharePage from './pages/SharePage'
+import Terms from './pages/Terms'
+import Privacy from './pages/Privacy'
 import type { ReactNode } from 'react'
 
 function ProtectedRoute({ children }: { children: ReactNode }) {
@@ -59,6 +61,8 @@ function AppRoutes() {
       <Route path="/round/:id" element={<ProtectedRoute><RoundDetail /></ProtectedRoute>} />
 
       <Route path="/r/:shareCode" element={<SharePage />} />
+      <Route path="/terms" element={<Terms />} />
+      <Route path="/privacy" element={<Privacy />} />
 
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
