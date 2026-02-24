@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { updateDraft, getDraft, type TimeWindow, TIME_WINDOWS } from '../lib/roundStore'
-import { generateDateChips } from '../lib/helpers'
+import { generateDateChips, formatTime } from '../lib/helpers'
 import type { Course } from '../lib/types'
 
 const dateChips = generateDateChips()
@@ -49,6 +49,15 @@ function SunsetIcon() {
   )
 }
 
+function ClockIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="10" />
+      <polyline points="12 6 12 12 16 14" />
+    </svg>
+  )
+}
+
 function FlagIcon({ size = 16, color = '#22C55E' }: { size?: number; color?: string }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -62,6 +71,17 @@ const timeIcons: Record<TimeWindow, () => React.ReactElement> = {
   morning: SunriseIcon,
   midday: SunIcon,
   afternoon: SunsetIcon,
+  custom: ClockIcon,
+}
+
+// Generate time options from 6:00 AM to 6:00 PM in 30-min increments
+const TIME_OPTIONS: { value: string; label: string }[] = []
+for (let h = 6; h <= 18; h++) {
+  for (const m of [0, 30]) {
+    if (h === 18 && m === 30) break
+    const value = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`
+    TIME_OPTIONS.push({ value, label: formatTime(value) })
+  }
 }
 
 export default function StartRound() {
@@ -70,6 +90,9 @@ export default function StartRound() {
 
   const [selectedDate, setSelectedDate] = useState(draft.date)
   const [selectedTime, setSelectedTime] = useState<TimeWindow>(draft.timeWindow)
+  const [customStart, setCustomStart] = useState(draft.timeWindow === 'custom' ? draft.timeStart : '08:00')
+  const [customEnd, setCustomEnd] = useState(draft.timeWindow === 'custom' ? draft.timeEnd : '12:00')
+  const [spots, setSpots] = useState(draft.spots)
   const [courses, setCourses] = useState<Course[]>([])
   const [selectedCourseIds, setSelectedCourseIds] = useState<Set<string>>(new Set(draft.courseIds))
   const [allCourses, setAllCourses] = useState(draft.courseIds.length === 0)
@@ -123,6 +146,8 @@ export default function StartRound() {
       date: selectedDate,
       timeWindow: selectedTime,
       courseIds: Array.from(selectedCourseIds),
+      spots,
+      ...(selectedTime === 'custom' ? { timeStart: customStart, timeEnd: customEnd } : {}),
     })
     navigate('/start/times')
   }
@@ -131,7 +156,9 @@ export default function StartRound() {
 
   // Build confirm summary text like "Feb 23 · Midday · Any of your courses"
   const confirmDate = new Date(selectedDate + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
-  const confirmTime = TIME_WINDOWS[selectedTime].label
+  const confirmTime = selectedTime === 'custom'
+    ? `${formatTime(customStart)} – ${formatTime(customEnd)}`
+    : TIME_WINDOWS[selectedTime].label
   const confirmCourses = allCourses
     ? 'Any of your courses'
     : selectedCourseIds.size === 0
@@ -139,7 +166,8 @@ export default function StartRound() {
       : selectedCourseIds.size <= 2
         ? courses.filter(c => selectedCourseIds.has(c.id)).map(c => c.name).join(', ')
         : `${selectedCourseIds.size} courses`
-  const confirmText = `${confirmDate} · ${confirmTime} · ${confirmCourses}`
+  const confirmPlayers = `${spots} player${spots !== 1 ? 's' : ''}`
+  const confirmText = `${confirmDate} · ${confirmTime} · ${confirmPlayers} · ${confirmCourses}`
 
   return (
     <div className="px-6 w-full max-w-[480px] mx-auto" style={{ paddingTop: 32, paddingBottom: 40 }}>
@@ -190,7 +218,7 @@ export default function StartRound() {
 
       {/* ── Time ── */}
       <span className="section-label block" style={{ marginBottom: 12 }}>Time</span>
-      <div className="flex" style={{ gap: 8, marginBottom: 24 }}>
+      <div className="flex" style={{ gap: 8, marginBottom: selectedTime === 'custom' ? 12 : 24 }}>
         {(Object.keys(TIME_WINDOWS) as TimeWindow[]).map(key => {
           const isSelected = selectedTime === key
           const Icon = timeIcons[key]
@@ -212,6 +240,83 @@ export default function StartRound() {
             </button>
           )
         })}
+      </div>
+
+      {selectedTime === 'custom' && (
+        <div className="flex" style={{ gap: 12, marginBottom: 24 }}>
+          <div className="flex-1 flex flex-col" style={{ gap: 6 }}>
+            <span className="text-text-secondary" style={{ fontSize: 12 }}>From</span>
+            <select
+              value={customStart}
+              onChange={e => setCustomStart(e.target.value)}
+              style={{
+                height: 44,
+                borderRadius: 12,
+                border: '1px solid #2E2E2E',
+                backgroundColor: '#1A1A1A',
+                color: 'white',
+                fontSize: 14,
+                padding: '0 12px',
+                appearance: 'none',
+                WebkitAppearance: 'none',
+                backgroundImage: `url("data:image/svg+xml,%3Csvg width='10' height='6' viewBox='0 0 10 6' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%239CA3AF' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")`,
+                backgroundRepeat: 'no-repeat',
+                backgroundPosition: 'right 12px center',
+              }}
+            >
+              {TIME_OPTIONS.map(opt => (
+                <option key={opt.value} value={opt.value}>{opt.label}</option>
+              ))}
+            </select>
+          </div>
+          <div className="flex-1 flex flex-col" style={{ gap: 6 }}>
+            <span className="text-text-secondary" style={{ fontSize: 12 }}>To</span>
+            <select
+              value={customEnd}
+              onChange={e => setCustomEnd(e.target.value)}
+              style={{
+                height: 44,
+                borderRadius: 12,
+                border: '1px solid #2E2E2E',
+                backgroundColor: '#1A1A1A',
+                color: 'white',
+                fontSize: 14,
+                padding: '0 12px',
+                appearance: 'none',
+                WebkitAppearance: 'none',
+                backgroundImage: `url("data:image/svg+xml,%3Csvg width='10' height='6' viewBox='0 0 10 6' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%239CA3AF' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")`,
+                backgroundRepeat: 'no-repeat',
+                backgroundPosition: 'right 12px center',
+              }}
+            >
+              {TIME_OPTIONS.map(opt => (
+                <option key={opt.value} value={opt.value}>{opt.label}</option>
+              ))}
+            </select>
+          </div>
+        </div>
+      )}
+
+      {/* ── Players ── */}
+      <span className="section-label block" style={{ marginBottom: 12 }}>Players</span>
+      <div className="flex" style={{ gap: 8, marginBottom: 24 }}>
+        {[2, 3, 4].map(n => (
+          <button
+            key={n}
+            onClick={() => setSpots(n)}
+            className="flex-1 font-bold transition-colors"
+            style={{
+              fontSize: 18,
+              padding: '12px 0',
+              borderRadius: 12,
+              border: spots === n ? '1px solid rgba(34,197,94,0.4)' : '1px solid #2E2E2E',
+              backgroundColor: spots === n ? 'rgba(34,197,94,0.06)' : '#1A1A1A',
+              color: spots === n ? '#22C55E' : '#9CA3AF',
+            }}
+          >
+            {n}
+          </button>
+        ))}
       </div>
 
       {/* ── Courses ── */}

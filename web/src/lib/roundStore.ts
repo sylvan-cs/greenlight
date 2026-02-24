@@ -1,4 +1,4 @@
-export type TimeWindow = 'morning' | 'midday' | 'afternoon'
+export type TimeWindow = 'morning' | 'midday' | 'afternoon' | 'custom'
 
 export interface RoundDraft {
   date: string
@@ -13,6 +13,7 @@ export const TIME_WINDOWS: Record<TimeWindow, { label: string; start: string; en
   morning: { label: 'Morning', start: '06:00', end: '10:00' },
   midday: { label: 'Midday', start: '10:00', end: '14:00' },
   afternoon: { label: 'Afternoon', start: '14:00', end: '18:00' },
+  custom: { label: 'Custom', start: '', end: '' },
 }
 
 function getNextSaturday(): string {
@@ -39,8 +40,8 @@ export function getDraft(): RoundDraft {
 
 export function updateDraft(updates: Partial<RoundDraft>) {
   draft = { ...draft, ...updates }
-  // Sync start/end times from timeWindow
-  if (updates.timeWindow) {
+  // Sync start/end times from timeWindow (skip for custom — uses explicit timeStart/timeEnd)
+  if (updates.timeWindow && updates.timeWindow !== 'custom') {
     const w = TIME_WINDOWS[updates.timeWindow]
     draft.timeStart = w.start
     draft.timeEnd = w.end

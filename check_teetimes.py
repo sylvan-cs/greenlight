@@ -1302,6 +1302,11 @@ def _sync_to_supabase(all_results, active_courses):
 
 def _notify(all_results, config):
     """Send email notification if any course has available tee times."""
+    # General alerts disabled — use app for notifications
+    # Match emails (_check_round_matches) are still active
+    print("\nGeneral alerts disabled (use app for notifications)")
+    return
+
     if not config:
         return
 

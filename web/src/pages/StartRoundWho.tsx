@@ -23,7 +23,7 @@ export default function StartRoundWho() {
   const [teeTimes, setTeeTimes] = useState<TeeTime[]>([])
   const [loadingTimes, setLoadingTimes] = useState(true)
   const [selectedTimeId, setSelectedTimeId] = useState<string | null>(null)
-  const [spots, setSpots] = useState(draft.spots)
+  const spots = draft.spots
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
 
@@ -260,30 +260,6 @@ export default function StartRoundWho() {
           </div>
         </>
       )}
-
-      {/* ── Players ── */}
-      <div style={{ marginBottom: 28 }}>
-        <span className="section-label block" style={{ marginBottom: 12 }}>Players</span>
-        <div className="flex" style={{ gap: 8 }}>
-          {[2, 3, 4].map(n => (
-            <button
-              key={n}
-              onClick={() => setSpots(n)}
-              className="flex-1 font-bold transition-colors"
-              style={{
-                fontSize: 18,
-                padding: '12px 0',
-                borderRadius: 12,
-                border: spots === n ? '1px solid rgba(34,197,94,0.4)' : '1px solid #2E2E2E',
-                backgroundColor: spots === n ? 'rgba(34,197,94,0.06)' : '#1A1A1A',
-                color: spots === n ? '#22C55E' : '#9CA3AF',
-              }}
-            >
-              {n}
-            </button>
-          ))}
-        </div>
-      </div>
 
       {/* ── CONFIRM ── */}
       <span className="section-label block" style={{ marginBottom: 12 }}>Confirm</span>
