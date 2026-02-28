@@ -14,25 +14,43 @@ function getGreeting(): string {
 }
 
 function StatusBadge({ status }: { status: string }) {
-  const config: Record<string, { text: string; className: string }> = {
-    open: { text: 'Gathering', className: 'bg-badge-gathering text-black' },
-    watching: { text: 'Watching', className: 'border border-green-primary text-green-primary bg-transparent' },
-    found: { text: 'Time Found', className: 'bg-badge-alert text-white' },
-    booked: { text: 'Booked', className: 'bg-green-primary text-white' },
-    cancelled: { text: 'Cancelled', className: 'bg-dark-border text-text-secondary' },
+  const config: Record<string, { text: string; className: string; pulse?: boolean }> = {
+    open: {
+      text: 'Gathering',
+      className: 'bg-amber-500/15 text-amber-500 border-amber-500/30',
+    },
+    watching: {
+      text: 'Watching',
+      className: 'bg-primary/15 text-primary border-primary/30',
+      pulse: true,
+    },
+    found: {
+      text: 'Time Found',
+      className: 'bg-primary/20 text-primary border-primary/40 font-semibold',
+    },
+    booked: {
+      text: 'Booked',
+      className: 'bg-primary text-primary-foreground border-primary',
+    },
+    cancelled: {
+      text: 'Cancelled',
+      className: 'bg-muted text-muted-foreground border-border',
+    },
   }
   const c = config[status] ?? config.watching
   return (
-    <span
-      className={`inline-block font-semibold rounded-full ${c.className}`}
-      style={{ fontSize: 12, padding: '5px 14px', lineHeight: '1' }}
-    >
+    <span className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-body font-medium border ${c.className}`}>
+      {c.pulse && (
+        <span className="relative flex h-2 w-2">
+          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-50" />
+          <span className="relative inline-flex rounded-full h-2 w-2 bg-primary" />
+        </span>
+      )}
       {c.text}
     </span>
   )
 }
 
-/** Featured "next round" card — large avatars with names, richer layout */
 function NextRoundCard({ round, onClick }: { round: RoundWithDetails; onClick: () => void }) {
   const courseNames = round.round_courses?.map(rc => rc.courses?.name).filter(Boolean) ?? []
   const courseDisplay = courseNames.length > 0 ? courseNames[0] : formatDateShort(round.round_date)
@@ -42,35 +60,26 @@ function NextRoundCard({ round, onClick }: { round: RoundWithDetails; onClick: (
   return (
     <button
       onClick={onClick}
-      className="w-full text-left transition"
-      style={{
-        backgroundColor: '#1A1A1A',
-        border: '1px solid #2E2E2E',
-        borderRadius: 16,
-        padding: 20,
-      }}
+      className="w-full text-left bg-card border border-border rounded-2xl p-5 transition-all duration-150 hover:border-primary/30 active:scale-[0.99] tap-target"
     >
-      {/* Status badge + Course name */}
-      <div className="flex items-center" style={{ gap: 10, marginBottom: 4 }}>
-        <p className="text-white font-display" style={{ fontSize: 18, fontWeight: 700 }}>
+      {/* Course + badge */}
+      <div className="flex items-center gap-2.5 mb-1">
+        <p className="font-display text-lg leading-tight text-foreground">
           {courseDisplay}
         </p>
-        {round.status === 'booked' && (
-          <StatusBadge status="booked" />
-        )}
+        {round.status === 'booked' && <StatusBadge status="booked" />}
       </div>
 
       {/* Date / time */}
-      <p className="text-text-secondary" style={{ fontSize: 14, marginBottom: 20 }}>
+      <p className="text-sm font-body text-muted-foreground mb-5">
         {formatDateShort(round.round_date)} &middot;{' '}
         {round.has_specific_time && round.specific_tee_time
           ? formatTime(round.specific_tee_time)
-          : `${formatTime(round.time_window_start)} – ${formatTime(round.time_window_end)}`
-        }
+          : `${formatTime(round.time_window_start)} – ${formatTime(round.time_window_end)}`}
       </p>
 
-      {/* Large avatars with names */}
-      <div className="flex" style={{ gap: 8, marginBottom: 16 }}>
+      {/* Large avatars */}
+      <div className="flex gap-2 mb-4">
         {rsvpsIn.map((r, i) => (
           <AvatarWithLabel key={i} name={r.name} confirmed={true} />
         ))}
@@ -78,19 +87,18 @@ function NextRoundCard({ round, onClick }: { round: RoundWithDetails; onClick: (
 
       {/* Status row */}
       <div className="flex items-center justify-between">
-        <div className="flex items-center" style={{ gap: 6 }}>
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#22C55E" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+        <div className="flex items-center gap-1.5">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="text-primary">
             <polyline points="20 6 9 17 4 12" />
           </svg>
-          <span className="text-green-primary font-semibold" style={{ fontSize: 12, letterSpacing: 0.5 }}>
+          <span className="text-primary font-body font-semibold text-xs tracking-wide uppercase">
             {rsvpsIn.length === round.spots_needed
-              ? `YOU'RE ALL SET \u00B7 ${rsvpsIn.length} PLAYING`
-              : `${rsvpsIn.length} OF ${round.spots_needed} ARE IN`
-            }
+              ? `You're all set \u00B7 ${rsvpsIn.length} playing`
+              : `${rsvpsIn.length} of ${round.spots_needed} are in`}
           </span>
         </div>
         {courseNames.length > 0 && round.round_courses?.[0]?.courses?.city && (
-          <span className="text-text-secondary" style={{ fontSize: 12 }}>
+          <span className="text-xs font-body text-muted-foreground">
             {round.round_courses[0].courses.city}
           </span>
         )}
@@ -99,7 +107,6 @@ function NextRoundCard({ round, onClick }: { round: RoundWithDetails; onClick: (
   )
 }
 
-/** Compact "in progress" card — small avatars, one-line layout */
 function InProgressCard({ round, onClick }: { round: RoundWithDetails; onClick: () => void }) {
   const courseNames = round.round_courses?.map(rc => rc.courses?.name).filter(Boolean) ?? []
   const rsvps = round.rsvps ?? []
@@ -112,45 +119,39 @@ function InProgressCard({ round, onClick }: { round: RoundWithDetails; onClick: 
   return (
     <button
       onClick={onClick}
-      className="w-full text-left relative transition"
-      style={{
-        backgroundColor: '#1A1A1A',
-        border: '1px solid #2E2E2E',
-        borderRadius: 16,
-        padding: 20,
-      }}
+      className="w-full text-left relative bg-card border border-border rounded-2xl p-5 transition-all duration-150 hover:border-primary/30 active:scale-[0.99] tap-target"
     >
       {/* Arrow */}
       <div className="absolute top-5 right-5">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#4B5563" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-muted-foreground">
           <polyline points="9 18 15 12 9 6" />
         </svg>
       </div>
 
       {/* Status badge */}
-      <div style={{ marginBottom: 12 }}>
+      <div className="mb-3">
         <StatusBadge status={round.status} />
       </div>
 
       {/* Course name */}
       {courseNames.length > 0 && (
-        <p className="text-white font-display pr-8" style={{ fontSize: 15, fontWeight: 500, marginBottom: 4 }}>
+        <p className="font-display text-[15px] font-medium text-foreground pr-8 mb-1">
           {courseNames.join(' or ')}
         </p>
       )}
 
-      {/* Date · time */}
-      <p className="text-text-secondary pr-8" style={{ fontSize: 14, marginBottom: 12 }}>
+      {/* Date / time */}
+      <p className="text-sm font-body text-muted-foreground pr-8 mb-3">
         {formatDateShort(round.round_date)} &middot; {timeDisplay}
       </p>
 
-      {/* Small avatar row + RSVP count */}
+      {/* Avatar row + count */}
       <div className="flex items-center justify-between">
         <SmallAvatarRow
           names={rsvps.map(r => ({ name: r.name, confirmed: r.status === 'in' }))}
           total={round.spots_needed}
         />
-        <span className="text-text-secondary" style={{ fontSize: 13 }}>
+        <span className="text-xs font-body text-muted-foreground">
           {rsvpsIn.length} of {round.spots_needed} are in
         </span>
       </div>
@@ -194,58 +195,60 @@ export default function Home() {
   const inProgressRounds = activeRounds.filter(r => r !== nextRound)
 
   return (
-    <div>
+    <div className="space-y-6 animate-fade-in">
       {/* Greeting */}
-      <h1 className="font-display font-bold italic" style={{ fontSize: 30, paddingTop: 32, marginBottom: 20 }}>
+      <h1 className="font-display text-3xl tracking-tight pt-4">
         {getGreeting()}, {firstName}
       </h1>
 
       {/* Start a Round */}
       <button
         onClick={() => navigate('/start')}
-        className="w-full bg-green-primary hover:bg-green-hover text-white transition-colors"
-        style={{ height: 52, fontSize: 16, fontWeight: 600, borderRadius: 12, marginBottom: 32 }}
+        className="w-full h-14 bg-primary hover:bg-green-hover text-primary-foreground font-bold rounded-xl transition-colors text-base font-body flex items-center justify-center gap-2 tap-target"
       >
-        +&nbsp;&nbsp;Start a Round
+        + Start a Round
       </button>
 
       {loading ? (
-        <div className="flex flex-col" style={{ gap: 12 }}>
-          <div className="skeleton" style={{ height: 20, width: 140, marginBottom: 4 }} />
+        <div className="flex flex-col gap-3">
+          <div className="skeleton" style={{ height: 20, width: 140 }} />
           <div className="skeleton w-full" style={{ height: 180 }} />
           <div className="skeleton w-full" style={{ height: 120 }} />
         </div>
       ) : rounds.length === 0 ? (
-        <div className="flex flex-col items-center text-center" style={{ paddingTop: 64, paddingBottom: 64 }}>
-          <div
-            className="rounded-full flex items-center justify-center"
-            style={{ width: 64, height: 64, backgroundColor: '#1A1A1A', border: '1px solid #2E2E2E', marginBottom: 16 }}
-          >
-            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#6B7280" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+        <div className="flex flex-col items-center text-center py-16">
+          <div className="w-16 h-16 rounded-full bg-card border border-border flex items-center justify-center mb-4">
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="text-muted-foreground">
               <circle cx="12" cy="12" r="10" />
               <path d="M12 6v6l4 2" />
             </svg>
           </div>
-          <p className="text-text-secondary" style={{ fontSize: 15 }}>No rounds yet. Start one!</p>
+          <p className="text-sm font-body text-muted-foreground">No rounds yet. Start one!</p>
         </div>
       ) : (
-        <>
+        <div className="space-y-8">
           {/* YOUR NEXT ROUND */}
           {nextRound && (
-            <div style={{ marginBottom: 32 }}>
-              <span className="section-label block" style={{ marginBottom: 10 }}>Your Next Round</span>
+            <section className="space-y-2.5">
+              <h2 className="text-xs font-body font-semibold uppercase tracking-widest text-muted-foreground">
+                Your Next Round
+              </h2>
               <NextRoundCard round={nextRound} onClick={() => navigate(`/round/${nextRound.id}`)} />
-            </div>
+            </section>
           )}
 
           {/* IN PROGRESS */}
           {inProgressRounds.length > 0 && (
-            <div>
-              <div className="flex items-center justify-between" style={{ marginBottom: 10 }}>
-                <span className="section-label">In Progress</span>
-                <button className="text-green-primary font-semibold" style={{ fontSize: 12, letterSpacing: 0.5 }}>SEE ALL</button>
+            <section className="space-y-2.5">
+              <div className="flex items-center justify-between">
+                <h2 className="text-xs font-body font-semibold uppercase tracking-widest text-muted-foreground">
+                  In Progress
+                </h2>
+                <button className="text-[11px] font-body font-medium text-primary uppercase tracking-wide">
+                  See All
+                </button>
               </div>
-              <div className="flex flex-col" style={{ gap: 12 }}>
+              <div className="flex flex-col gap-3">
                 {inProgressRounds.map(round => (
                   <InProgressCard
                     key={round.id}
@@ -254,9 +257,9 @@ export default function Home() {
                   />
                 ))}
               </div>
-            </div>
+            </section>
           )}
-        </>
+        </div>
       )}
     </div>
   )

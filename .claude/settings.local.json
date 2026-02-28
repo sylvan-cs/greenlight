@@ -37,7 +37,9 @@
       "Bash(echo:*)",
       "Bash(dir:*)",
       "Bash(npm run dev:*)",
-      "Bash(cd /c/Users/sylva/greenlight/web && npm run build 2>&1)"
+      "Bash(cd /c/Users/sylva/greenlight/web && npm run build 2>&1)",
+      "Bash(curl:)",
+      "Bash(curl:*)"
     ]
   }
 }

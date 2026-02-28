@@ -8,35 +8,31 @@ interface AvatarProps {
 
 export default function Avatar({ name, confirmed = false, size = 36 }: AvatarProps) {
   const initials = getInitials(name)
-  const borderColor = confirmed ? '#22C55E' : '#4B5563'
+  const fontSize = Math.max(9, size * 0.3)
 
   return (
     <div className="relative inline-flex shrink-0" style={{ width: size, height: size }}>
       <div
-        className="rounded-full flex items-center justify-center"
-        style={{
-          width: size,
-          height: size,
-          border: `2px solid ${borderColor}`,
-          backgroundColor: '#2E2E2E',
-        }}
+        className={`rounded-full flex items-center justify-center font-body font-semibold ${
+          confirmed
+            ? 'bg-primary/15 text-primary ring-2 ring-primary/40'
+            : 'bg-muted text-muted-foreground'
+        }`}
+        style={{ width: size, height: size }}
       >
-        <span
-          className="font-semibold text-white leading-none"
-          style={{ fontSize: Math.max(9, size * 0.3) }}
-        >
+        <span className="leading-none" style={{ fontSize }}>
           {initials}
         </span>
       </div>
       {confirmed && size >= 32 && (
         <div
-          className="absolute rounded-full bg-green-primary flex items-center justify-center"
+          className="absolute rounded-full bg-primary flex items-center justify-center"
           style={{
             width: Math.max(8, size * 0.22),
             height: Math.max(8, size * 0.22),
             bottom: -1,
             right: -1,
-            boxShadow: '0 0 0 2px #111111',
+            boxShadow: '0 0 0 2px var(--color-background)',
           }}
         >
           {size >= 36 && (
@@ -50,24 +46,19 @@ export default function Avatar({ name, confirmed = false, size = 36 }: AvatarPro
   )
 }
 
-/** Compact avatar row for in-progress cards — small circles, no overlap, tight spacing */
+/** Compact avatar row for in-progress cards */
 export function SmallAvatarRow({ names, total }: { names: { name: string; confirmed: boolean }[]; total: number }) {
   const emptyCount = Math.max(0, total - names.length)
   return (
-    <div className="flex items-center" style={{ gap: 4 }}>
+    <div className="flex items-center gap-1">
       {names.map((n, i) => (
         <Avatar key={i} name={n.name} confirmed={n.confirmed} size={28} />
       ))}
       {Array.from({ length: emptyCount }).map((_, i) => (
         <div
           key={`e-${i}`}
-          className="rounded-full shrink-0"
-          style={{
-            width: 28,
-            height: 28,
-            border: '2px solid #4B5563',
-            backgroundColor: '#1A1A1A',
-          }}
+          className="rounded-full shrink-0 border-2 border-muted-foreground/30 bg-card"
+          style={{ width: 28, height: 28 }}
         />
       ))}
     </div>
@@ -77,9 +68,9 @@ export function SmallAvatarRow({ names, total }: { names: { name: string; confir
 /** Large avatar with name below — for next round card */
 export function AvatarWithLabel({ name, confirmed }: { name: string; confirmed: boolean }) {
   return (
-    <div className="flex flex-col items-center" style={{ gap: 4, width: 52 }}>
+    <div className="flex flex-col items-center gap-1 w-[52px]">
       <Avatar name={name} confirmed={confirmed} size={44} />
-      <span className="text-text-secondary text-center leading-tight truncate w-full" style={{ fontSize: 11 }}>
+      <span className="text-muted-foreground font-body text-center leading-tight truncate w-full text-[11px]">
         {name.split(' ')[0]}
       </span>
     </div>

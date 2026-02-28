@@ -6,15 +6,6 @@ import { getDraft, resetDraft } from '../lib/roundStore'
 import { generateShareCode, formatTime, formatDateShort, getTimeWindowLabel } from '../lib/helpers'
 import type { TeeTime } from '../lib/types'
 
-function FlagIcon({ size = 16, color = '#22C55E' }: { size?: number; color?: string }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z" />
-      <line x1="4" y1="22" x2="4" y2="15" />
-    </svg>
-  )
-}
-
 export default function StartRoundWho() {
   const navigate = useNavigate()
   const { user } = useAuth()
@@ -147,18 +138,22 @@ export default function StartRoundWho() {
   // Loading state
   if (loadingTimes) {
     return (
-      <div className="px-6 w-full max-w-[480px] mx-auto" style={{ paddingTop: 32 }}>
-        <div className="flex items-center" style={{ gap: 12, paddingBottom: 28 }}>
-          <button onClick={() => navigate('/start')} className="flex items-center shrink-0">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#22C55E" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <div className="animate-fade-in space-y-6 px-5 max-w-lg mx-auto pt-4">
+        <div className="flex items-center gap-3">
+          <button
+            onClick={() => navigate('/start')}
+            className="w-9 h-9 rounded-full flex items-center justify-center bg-muted/60 hover:bg-muted transition-colors shrink-0 active:scale-95"
+            aria-label="Go back"
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <line x1="19" y1="12" x2="5" y2="12" />
               <polyline points="12 19 5 12 12 5" />
             </svg>
           </button>
-          <h1 className="font-display font-bold text-white" style={{ fontSize: 24 }}>Available Times</h1>
+          <h1 className="text-3xl font-display tracking-tight">Available Times</h1>
         </div>
-        <p className="text-text-secondary" style={{ fontSize: 14, marginBottom: 24 }}>Looking for open tee times...</p>
-        <div className="flex flex-col" style={{ gap: 12 }}>
+        <p className="text-sm font-body text-muted-foreground">Looking for open tee times...</p>
+        <div className="flex flex-col gap-3">
           {[1, 2, 3, 4, 5].map(i => (
             <div key={i} className="skeleton w-full" style={{ height: 64 }} />
           ))}
@@ -168,55 +163,59 @@ export default function StartRoundWho() {
   }
 
   return (
-    <div className="px-6 w-full max-w-[480px] mx-auto" style={{ paddingTop: 32, paddingBottom: 40 }}>
+    <div className="animate-fade-in space-y-6 px-5 max-w-lg mx-auto pt-4 pb-10">
 
-      {/* ── Header: ← Available Times ── */}
-      <div className="flex items-center" style={{ gap: 12, paddingBottom: 28 }}>
-        <button onClick={() => navigate('/start')} className="flex items-center shrink-0">
-          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#22C55E" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      {/* ── Header ── */}
+      <div className="flex items-center gap-3">
+        <button
+          onClick={() => navigate('/start')}
+          className="w-9 h-9 rounded-full flex items-center justify-center bg-muted/60 hover:bg-muted transition-colors shrink-0 active:scale-95"
+          aria-label="Go back"
+        >
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <line x1="19" y1="12" x2="5" y2="12" />
             <polyline points="12 19 5 12 12 5" />
           </svg>
         </button>
-        <h1 className="font-display font-bold text-white" style={{ fontSize: 24 }}>Available Times</h1>
+        <h1 className="text-3xl font-display tracking-tight">Available Times</h1>
       </div>
 
       {hasAvailability ? (
         <>
-          <p className="text-text-secondary" style={{ fontSize: 14, marginBottom: 20 }}>Pick a time and invite your crew</p>
+          <p className="text-sm font-body text-muted-foreground">Pick a time and invite your crew</p>
 
           {courseGroups.map(([courseName, times]) => (
-            <div key={courseName} style={{ marginBottom: 20 }}>
+            <section key={courseName} className="space-y-2">
               {multiCourse && (
-                <span className="section-label block" style={{ marginBottom: 10 }}>{courseName}</span>
+                <h2 className="text-xs font-body font-semibold uppercase tracking-widest text-muted-foreground">
+                  {courseName}
+                </h2>
               )}
-              <div className="flex flex-col" style={{ gap: 8 }}>
+              <div className="flex flex-col gap-2">
                 {times.map(tt => {
                   const isSelected = selectedTimeId === tt.id
                   return (
                     <button
                       key={tt.id}
                       onClick={() => setSelectedTimeId(isSelected ? null : tt.id)}
-                      className="w-full text-left flex items-center justify-between transition-colors"
-                      style={{
-                        padding: '16px 20px',
-                        borderRadius: 16,
-                        border: isSelected ? '1px solid rgba(34,197,94,0.4)' : '1px solid #2E2E2E',
-                        backgroundColor: isSelected ? 'rgba(34,197,94,0.06)' : '#1A1A1A',
-                      }}
+                      className={`w-full text-left flex items-center justify-between p-4 rounded-xl border transition-all duration-150 active:scale-[0.98] ${
+                        isSelected
+                          ? 'border-primary/40 bg-primary/5'
+                          : 'border-border bg-card hover:border-primary/30'
+                      }`}
                     >
-                      <div className="flex items-center" style={{ gap: 16 }}>
-                        <span className="text-white font-bold" style={{ fontSize: 17 }}>{formatTime(tt.tee_time)}</span>
+                      <div className="flex items-center gap-4">
+                        <span className="font-display text-[17px] text-foreground">{formatTime(tt.tee_time)}</span>
                         {!multiCourse && (
-                          <span className="text-text-secondary" style={{ fontSize: 14 }}>{tt.courses?.name}</span>
+                          <span className="text-sm font-body text-muted-foreground">{tt.courses?.name}</span>
                         )}
                       </div>
-                      <div className="flex items-center" style={{ gap: 12 }}>
+                      <div className="flex items-center gap-3">
                         {tt.price_label && (
-                          <span className="text-text-secondary" style={{ fontSize: 14 }}>{tt.price_label}</span>
+                          <span className="text-sm font-body text-muted-foreground">{tt.price_label}</span>
                         )}
                         {isSelected && (
-                          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#22C55E" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="text-primary">
                             <polyline points="20 6 9 17 4 12" />
                           </svg>
                         )}
@@ -225,81 +224,64 @@ export default function StartRoundWho() {
                   )
                 })}
               </div>
-            </div>
+            </section>
           ))}
         </>
       ) : (
         <>
-          <p className="text-text-secondary" style={{ fontSize: 14, marginBottom: 20 }}>
+          <p className="text-sm font-body text-muted-foreground">
             No times available right now. We'll watch these courses and notify you when something opens up.
           </p>
 
-          <div
-            style={{
-              backgroundColor: '#1A1A1A',
-              border: '1px solid #2E2E2E',
-              borderRadius: 16,
-              padding: 20,
-              marginBottom: 20,
-            }}
-          >
-            <div className="flex flex-col" style={{ gap: 12, fontSize: 14 }}>
-              <div className="flex justify-between">
-                <span className="text-text-secondary">Date</span>
-                <span className="text-white font-medium">{formatDateShort(draft.date)}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-text-secondary">Window</span>
-                <span className="text-white font-medium">{timeLabel}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-text-secondary">Courses</span>
-                <span className="text-white font-medium text-right">{draft.courseIds.length} selected</span>
-              </div>
+          <div className="bg-card border border-border rounded-2xl p-5 space-y-3">
+            <div className="flex justify-between text-sm font-body">
+              <span className="text-muted-foreground">Date</span>
+              <span className="text-foreground font-medium">{formatDateShort(draft.date)}</span>
+            </div>
+            <div className="flex justify-between text-sm font-body">
+              <span className="text-muted-foreground">Window</span>
+              <span className="text-foreground font-medium">{timeLabel}</span>
+            </div>
+            <div className="flex justify-between text-sm font-body">
+              <span className="text-muted-foreground">Courses</span>
+              <span className="text-foreground font-medium text-right">{draft.courseIds.length} selected</span>
             </div>
           </div>
         </>
       )}
 
-      {/* ── CONFIRM ── */}
-      <span className="section-label block" style={{ marginBottom: 12 }}>Confirm</span>
+      {/* ── Confirm summary ── */}
+      <section className="space-y-3">
+        <h3 className="text-xs font-body font-semibold uppercase tracking-widest text-muted-foreground">
+          Confirm
+        </h3>
 
-      <div
-        className="flex items-center"
-        style={{
-          gap: 14,
-          backgroundColor: '#1A1A1A',
-          border: '1px solid rgba(34,197,94,0.3)',
-          borderRadius: 16,
-          padding: '16px 20px',
-          marginBottom: 16,
-        }}
-      >
-        <div
-          className="rounded-full flex items-center justify-center shrink-0"
-          style={{ width: 40, height: 40, backgroundColor: 'rgba(34,197,94,0.12)' }}
-        >
-          <FlagIcon size={18} />
+        <div className="flex items-center gap-3.5 bg-card border border-primary/30 rounded-2xl p-4">
+          <div className="w-10 h-10 rounded-full bg-primary/12 flex items-center justify-center shrink-0">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-primary">
+              <path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z" />
+              <line x1="4" y1="22" x2="4" y2="15" />
+            </svg>
+          </div>
+          <span className="text-sm font-body font-medium text-foreground">{confirmText}</span>
         </div>
-        <span className="text-white font-medium" style={{ fontSize: 14 }}>{confirmText}</span>
-      </div>
+      </section>
 
       {error && (
-        <p className="text-red-400 text-center" style={{ fontSize: 14, marginBottom: 12 }}>{error}</p>
+        <p className="text-sm font-body text-destructive text-center">{error}</p>
       )}
 
       {/* ── Action Button ── */}
       <button
         onClick={handleSubmit}
         disabled={submitting || (hasAvailability && !selectedTimeId)}
-        className="w-full flex items-center justify-center bg-green-primary hover:bg-green-hover text-white font-bold transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
-        style={{ gap: 10, height: 56, borderRadius: 16, fontSize: 16, marginBottom: 10 }}
+        className="w-full h-14 flex items-center justify-center gap-2 bg-primary hover:bg-green-hover text-primary-foreground font-bold rounded-xl transition-colors disabled:opacity-30 disabled:cursor-not-allowed text-base font-body"
       >
         {submitting ? (
-          'Creating...'
+          'Creating\u2026'
         ) : hasAvailability ? (
           <>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
               <polyline points="15 3 21 3 21 9" />
               <line x1="10" y1="14" x2="21" y2="3" />
@@ -308,17 +290,19 @@ export default function StartRoundWho() {
           </>
         ) : (
           <>
-            <FlagIcon size={16} color="white" />
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z" />
+              <line x1="4" y1="22" x2="4" y2="15" />
+            </svg>
             Start Watching
           </>
         )}
       </button>
 
-      <p className="text-text-secondary text-center" style={{ fontSize: 13 }}>
+      <p className="text-xs font-body text-muted-foreground text-center">
         {hasAvailability
           ? "We'll create the round and send the invite link."
-          : "We'll notify you when a matching tee time opens up."
-        }
+          : "We'll notify you when a matching tee time opens up."}
       </p>
     </div>
   )
