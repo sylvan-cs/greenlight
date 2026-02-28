@@ -6,6 +6,8 @@ interface AuthContextType {
   user: User | null
   session: Session | null
   loading: boolean
+  needsOnboarding: boolean
+  setNeedsOnboarding: (val: boolean) => void
   signUp: (email: string, password: string, fullName: string) => Promise<{ error: string | null }>
   signIn: (email: string, password: string) => Promise<{ error: string | null }>
   signOut: () => Promise<void>
@@ -13,23 +15,48 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined)
 
+async function checkOnboarding(userId: string): Promise<boolean> {
+  const { count } = await supabase
+    .from('user_courses')
+    .select('*', { count: 'exact', head: true })
+    .eq('user_id', userId)
+  return (count ?? 0) === 0
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null)
   const [session, setSession] = useState<Session | null>(null)
   const [loading, setLoading] = useState(true)
+  const [needsOnboarding, setNeedsOnboarding] = useState(false)
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
+    supabase.auth.getSession().then(async ({ data: { session } }) => {
       setSession(session)
       setUser(session?.user ?? null)
+
+      if (session?.user) {
+        const needs = await checkOnboarding(session.user.id)
+        setNeedsOnboarding(needs)
+      }
+
       setLoading(false)
     })
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setSession(session)
-      setUser(session?.user ?? null)
-      setLoading(false)
-    })
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(
+      async (_event, session) => {
+        setSession(session)
+        setUser(session?.user ?? null)
+
+        if (session?.user && _event === 'SIGNED_IN') {
+          setLoading(true)
+          const needs = await checkOnboarding(session.user.id)
+          setNeedsOnboarding(needs)
+          setLoading(false)
+        } else if (!session) {
+          setNeedsOnboarding(false)
+        }
+      }
+    )
 
     return () => subscription.unsubscribe()
   }, [])
@@ -53,7 +80,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   return (
-    <AuthContext.Provider value={{ user, session, loading, signUp, signIn, signOut }}>
+    <AuthContext.Provider value={{ user, session, loading, needsOnboarding, setNeedsOnboarding, signUp, signIn, signOut }}>
       {children}
     </AuthContext.Provider>
   )

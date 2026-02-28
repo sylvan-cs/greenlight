@@ -49,6 +49,14 @@ export interface TeeTime {
   courses?: Course
 }
 
+export interface UserCourse {
+  id: string
+  user_id: string
+  course_id: string
+  created_at: string
+  courses?: Course
+}
+
 export interface RoundWithDetails extends Round {
   round_courses: (RoundCourse & { courses: Course })[]
   rsvps: Rsvp[]

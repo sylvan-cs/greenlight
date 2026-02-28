@@ -2,15 +2,21 @@ import { useState, useEffect } from 'react'
 import { useAuth } from '../contexts/AuthContext'
 import { getInitials } from '../lib/helpers'
 import { supabase } from '../lib/supabase'
+import CourseSelector from '../components/CourseSelector'
+import type { Course } from '../lib/types'
 
 export default function Profile() {
   const { user, signOut } = useAuth()
   const [phone, setPhone] = useState('')
   const [phoneSaved, setPhoneSaved] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [userCourses, setUserCourses] = useState<Course[]>([])
+  const [editingCourses, setEditingCourses] = useState(false)
+  const [savingCourses, setSavingCourses] = useState(false)
 
   const fullName = user?.user_metadata?.full_name ?? 'User'
   const email = user?.email ?? ''
+  const initials = getInitials(fullName)
 
   useEffect(() => {
     if (!user) return
@@ -23,6 +29,43 @@ export default function Profile() {
         if (data?.phone) setPhone(data.phone)
       })
   }, [user])
+
+  useEffect(() => {
+    if (!user) return
+    supabase
+      .from('user_courses')
+      .select('course_id, courses(*)')
+      .eq('user_id', user.id)
+      .then(({ data }) => {
+        if (data) {
+          setUserCourses(data.map((uc: any) => uc.courses).filter(Boolean))
+        }
+      })
+  }, [user])
+
+  const saveCoursesEdit = async (selectedIds: Set<string>) => {
+    if (!user) return
+    setSavingCourses(true)
+
+    await supabase.from('user_courses').delete().eq('user_id', user.id)
+
+    if (selectedIds.size > 0) {
+      const rows = Array.from(selectedIds).map(course_id => ({
+        user_id: user.id,
+        course_id,
+      }))
+      await supabase.from('user_courses').insert(rows)
+    }
+
+    const { data } = await supabase
+      .from('user_courses')
+      .select('course_id, courses(*)')
+      .eq('user_id', user.id)
+    if (data) setUserCourses(data.map((uc: any) => uc.courses).filter(Boolean))
+
+    setEditingCourses(false)
+    setSavingCourses(false)
+  }
 
   const savePhone = async () => {
     if (!user) return
@@ -43,51 +86,108 @@ export default function Profile() {
   }
 
   return (
-    <div style={{ paddingTop: 32 }}>
-      <h1 className="font-display font-bold" style={{ fontSize: 30, marginBottom: 32 }}>Profile</h1>
-
-      <div className="bg-dark-card border border-dark-border rounded-2xl p-6 mb-6">
-        <div className="w-16 h-16 rounded-full bg-green-primary/15 border-2 border-green-primary flex items-center justify-center mb-4">
-          <span className="text-green-primary text-xl font-bold">
-            {getInitials(fullName)}
-          </span>
+    <div className="space-y-8 animate-fade-in pb-8">
+      {/* Header */}
+      <header className="pt-4 space-y-4">
+        <div className="flex items-center gap-4">
+          <div className="w-16 h-16 rounded-full bg-muted flex items-center justify-center text-xl font-display text-muted-foreground shrink-0">
+            {initials}
+          </div>
+          <div>
+            <h1 className="text-3xl font-display tracking-tight">{fullName}</h1>
+            <p className="text-sm text-muted-foreground font-body mt-0.5">{email}</p>
+          </div>
         </div>
-        <p className="font-display font-semibold text-lg">{fullName}</p>
-        <p className="text-text-secondary text-sm">{email}</p>
-      </div>
+      </header>
 
-      <div className="bg-dark-card border border-dark-border rounded-2xl p-6 mb-6">
-        <label htmlFor="phone" className="mb-2 block" style={{ fontSize: 13, color: '#9CA3AF' }}>
+      <hr className="border-border/40" />
+
+      {/* Phone number */}
+      <section className="space-y-3">
+        <h2 className="text-xs font-body font-semibold uppercase tracking-widest text-muted-foreground">
           Phone Number
-        </label>
-        <p className="text-text-secondary text-xs mb-3">
+        </h2>
+        <p className="text-xs font-body text-muted-foreground">
           Get SMS alerts when a matching tee time is found.
         </p>
         <div className="flex gap-3">
           <input
-            id="phone"
             type="tel"
             value={phone}
             onChange={e => setPhone(e.target.value)}
             placeholder="+1 (555) 123-4567"
-            className="flex-1 px-4 py-3.5 bg-dark-bg border border-dark-border rounded-xl text-white placeholder-text-secondary focus:outline-none focus:border-green-primary transition-colors"
+            className="flex-1 h-12 px-4 bg-card border border-border rounded-xl text-foreground font-body placeholder-muted-foreground focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary transition-colors"
           />
           <button
             onClick={savePhone}
             disabled={saving}
-            className="px-5 py-3.5 bg-green-primary hover:bg-green-hover text-white font-bold rounded-xl transition-colors disabled:opacity-50 text-sm"
+            className="h-12 px-5 bg-primary hover:bg-green-hover text-primary-foreground font-bold rounded-xl transition-colors disabled:opacity-50 text-sm font-body"
           >
-            {saving ? 'Saving...' : phoneSaved ? 'Saved!' : 'Save'}
+            {saving ? 'Saving\u2026' : phoneSaved ? 'Saved!' : 'Save'}
           </button>
         </div>
-      </div>
+      </section>
 
-      <button
-        onClick={signOut}
-        className="w-full py-3.5 border border-dark-border text-text-secondary font-medium rounded-xl hover:bg-dark-card transition-colors"
-      >
-        Sign Out
-      </button>
+      <hr className="border-border/40" />
+
+      {/* My Courses */}
+      <section className="space-y-3">
+        <div className="flex items-center justify-between">
+          <h2 className="text-xs font-body font-semibold uppercase tracking-widest text-muted-foreground">
+            My Courses
+          </h2>
+          {!editingCourses && (
+            <button
+              onClick={() => setEditingCourses(true)}
+              className="text-xs font-body font-medium text-primary hover:underline"
+            >
+              Edit
+            </button>
+          )}
+        </div>
+
+        {editingCourses ? (
+          <CourseSelector
+            key="profile-course-editor"
+            initialSelectedIds={new Set(userCourses.map(c => c.id))}
+            onSave={saveCoursesEdit}
+            saveLabel="Save"
+            isSaving={savingCourses}
+          />
+        ) : userCourses.length === 0 ? (
+          <p className="text-sm font-body text-muted-foreground">
+            No courses added yet.
+          </p>
+        ) : (
+          <div className="flex flex-wrap gap-2">
+            {userCourses.map(course => (
+              <span
+                key={course.id}
+                className="px-3.5 py-2 rounded-full text-sm font-body font-medium bg-primary/15 text-primary border border-primary/40"
+              >
+                {course.name}
+              </span>
+            ))}
+          </div>
+        )}
+      </section>
+
+      <hr className="border-border/40" />
+
+      {/* Sign Out */}
+      <section className="pb-4">
+        <button
+          onClick={signOut}
+          className="w-full h-12 flex items-center justify-center gap-2 border border-destructive/30 text-destructive font-medium rounded-xl hover:bg-destructive/10 transition-colors font-body"
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+            <polyline points="16 17 21 12 16 7" />
+            <line x1="21" y1="12" x2="9" y2="12" />
+          </svg>
+          Sign Out
+        </button>
+      </section>
     </div>
   )
 }

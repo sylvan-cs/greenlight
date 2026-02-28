@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
+import { useAuth } from '../contexts/AuthContext'
 import { updateDraft, getDraft, type TimeWindow, TIME_WINDOWS } from '../lib/roundStore'
 import { generateDateChips, formatTime } from '../lib/helpers'
 import type { Course } from '../lib/types'
@@ -58,15 +59,6 @@ function ClockIcon() {
   )
 }
 
-function FlagIcon({ size = 16, color = '#22C55E' }: { size?: number; color?: string }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z" />
-      <line x1="4" y1="22" x2="4" y2="15" />
-    </svg>
-  )
-}
-
 const timeIcons: Record<TimeWindow, () => React.ReactElement> = {
   morning: SunriseIcon,
   midday: SunIcon,
@@ -86,6 +78,7 @@ for (let h = 6; h <= 18; h++) {
 
 export default function StartRound() {
   const navigate = useNavigate()
+  const { user } = useAuth()
   const draft = getDraft()
 
   const [selectedDate, setSelectedDate] = useState(draft.date)
@@ -100,23 +93,30 @@ export default function StartRound() {
 
   useEffect(() => {
     async function fetchCourses() {
+      if (!user) return
+
       const { data, error } = await supabase
-        .from('courses')
-        .select('*')
-        .order('region')
-        .order('name')
+        .from('user_courses')
+        .select('course_id, courses(*)')
+        .eq('user_id', user.id)
 
       if (!error && data) {
-        setCourses(data as Course[])
+        const myCourses = data
+          .map((uc: any) => uc.courses)
+          .filter(Boolean) as Course[]
+        myCourses.sort((a, b) =>
+          a.region.localeCompare(b.region) || a.name.localeCompare(b.name)
+        )
+        setCourses(myCourses)
         if (allCourses) {
-          setSelectedCourseIds(new Set((data as Course[]).map(c => c.id)))
+          setSelectedCourseIds(new Set(myCourses.map(c => c.id)))
         }
       }
       setLoadingCourses(false)
     }
 
     fetchCourses()
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [user]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const toggleAllCourses = () => {
     if (allCourses) {
@@ -154,7 +154,6 @@ export default function StartRound() {
 
   const canProceed = selectedCourseIds.size > 0
 
-  // Build confirm summary text like "Feb 23 · Midday · Any of your courses"
   const confirmDate = new Date(selectedDate + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
   const confirmTime = selectedTime === 'custom'
     ? `${formatTime(customStart)} – ${formatTime(customEnd)}`
@@ -170,260 +169,229 @@ export default function StartRound() {
   const confirmText = `${confirmDate} · ${confirmTime} · ${confirmPlayers} · ${confirmCourses}`
 
   return (
-    <div className="px-6 w-full max-w-[480px] mx-auto" style={{ paddingTop: 32, paddingBottom: 40 }}>
+    <div className="animate-fade-in space-y-6 px-5 max-w-lg mx-auto pt-4 pb-10">
 
-      {/* ── Header: ← Start a Round ── */}
-      <div className="flex items-center" style={{ gap: 12, paddingBottom: 28 }}>
-        <button onClick={() => navigate('/home')} className="flex items-center shrink-0">
-          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#22C55E" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      {/* ── Header ── */}
+      <div className="flex items-center gap-3">
+        <button
+          onClick={() => navigate('/home')}
+          className="w-9 h-9 rounded-full flex items-center justify-center bg-muted/60 hover:bg-muted transition-colors shrink-0 active:scale-95"
+          aria-label="Go back"
+        >
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <line x1="19" y1="12" x2="5" y2="12" />
             <polyline points="12 19 5 12 12 5" />
           </svg>
         </button>
-        <h1 className="font-display font-bold text-white" style={{ fontSize: 24 }}>Start a Round</h1>
+        <h1 className="text-3xl font-display tracking-tight">Start a Round</h1>
       </div>
 
       {/* ── Date ── */}
-      <span className="section-label block" style={{ marginBottom: 12 }}>Date</span>
-      <div style={{ marginBottom: 24 }}>
-        <div className="flex overflow-x-auto no-scrollbar -mx-6 px-6 pb-1" style={{ gap: 8 }}>
+      <section className="space-y-2.5">
+        <h3 className="text-xs font-body font-semibold uppercase tracking-widest text-muted-foreground">
+          Date
+        </h3>
+        <div className="flex gap-2 overflow-x-auto -mx-5 px-5 pb-1 no-scrollbar">
           {dateChips.map(chip => {
             const isSelected = selectedDate === chip.date
             return (
               <button
                 key={chip.date}
                 onClick={() => setSelectedDate(chip.date)}
-                className="flex flex-col items-center justify-center shrink-0 rounded-xl transition-colors"
-                style={{
-                  width: 56,
-                  height: 64,
-                  border: `1px solid ${isSelected ? '#22C55E' : '#2E2E2E'}`,
-                  backgroundColor: isSelected ? 'rgba(34,197,94,0.1)' : '#1A1A1A',
-                }}
+                className={`shrink-0 flex flex-col items-center w-14 py-2 rounded-xl text-center transition-all duration-150 active:scale-95 select-none ${
+                  isSelected
+                    ? 'bg-primary text-primary-foreground'
+                    : 'bg-muted/50 text-muted-foreground hover:bg-muted'
+                }`}
               >
-                <span
-                  className="font-semibold tracking-wider"
-                  style={{ fontSize: 10, color: isSelected ? '#22C55E' : '#9CA3AF' }}
-                >
+                <span className="text-[10px] font-body font-semibold uppercase tracking-wider">
                   {chip.dayLabel}
                 </span>
-                <span className="text-white font-bold leading-tight" style={{ fontSize: 18 }}>
-                  {chip.dateNum}
-                </span>
+                <span className="text-lg font-display leading-tight mt-0.5">{chip.dateNum}</span>
               </button>
             )
           })}
         </div>
-      </div>
+      </section>
 
       {/* ── Time ── */}
-      <span className="section-label block" style={{ marginBottom: 12 }}>Time</span>
-      <div className="flex" style={{ gap: 8, marginBottom: selectedTime === 'custom' ? 12 : 24 }}>
-        {(Object.keys(TIME_WINDOWS) as TimeWindow[]).map(key => {
-          const isSelected = selectedTime === key
-          const Icon = timeIcons[key]
-          return (
-            <button
-              key={key}
-              onClick={() => setSelectedTime(key)}
-              className="flex-1 flex items-center justify-center rounded-xl text-sm font-medium transition-colors"
-              style={{
-                gap: 6,
-                height: 44,
-                border: `1px solid ${isSelected ? '#22C55E' : '#2E2E2E'}`,
-                backgroundColor: isSelected ? 'rgba(34,197,94,0.1)' : '#1A1A1A',
-                color: isSelected ? '#22C55E' : '#9CA3AF',
-              }}
-            >
-              <Icon />
-              {TIME_WINDOWS[key].label}
-            </button>
-          )
-        })}
-      </div>
-
-      {selectedTime === 'custom' && (
-        <div className="flex" style={{ gap: 12, marginBottom: 24 }}>
-          <div className="flex-1 flex flex-col" style={{ gap: 6 }}>
-            <span className="text-text-secondary" style={{ fontSize: 12 }}>From</span>
-            <select
-              value={customStart}
-              onChange={e => setCustomStart(e.target.value)}
-              style={{
-                height: 44,
-                borderRadius: 12,
-                border: '1px solid #2E2E2E',
-                backgroundColor: '#1A1A1A',
-                color: 'white',
-                fontSize: 14,
-                padding: '0 12px',
-                appearance: 'none',
-                WebkitAppearance: 'none',
-                backgroundImage: `url("data:image/svg+xml,%3Csvg width='10' height='6' viewBox='0 0 10 6' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%239CA3AF' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")`,
-                backgroundRepeat: 'no-repeat',
-                backgroundPosition: 'right 12px center',
-              }}
-            >
-              {TIME_OPTIONS.map(opt => (
-                <option key={opt.value} value={opt.value}>{opt.label}</option>
-              ))}
-            </select>
-          </div>
-          <div className="flex-1 flex flex-col" style={{ gap: 6 }}>
-            <span className="text-text-secondary" style={{ fontSize: 12 }}>To</span>
-            <select
-              value={customEnd}
-              onChange={e => setCustomEnd(e.target.value)}
-              style={{
-                height: 44,
-                borderRadius: 12,
-                border: '1px solid #2E2E2E',
-                backgroundColor: '#1A1A1A',
-                color: 'white',
-                fontSize: 14,
-                padding: '0 12px',
-                appearance: 'none',
-                WebkitAppearance: 'none',
-                backgroundImage: `url("data:image/svg+xml,%3Csvg width='10' height='6' viewBox='0 0 10 6' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%239CA3AF' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")`,
-                backgroundRepeat: 'no-repeat',
-                backgroundPosition: 'right 12px center',
-              }}
-            >
-              {TIME_OPTIONS.map(opt => (
-                <option key={opt.value} value={opt.value}>{opt.label}</option>
-              ))}
-            </select>
-          </div>
-        </div>
-      )}
-
-      {/* ── Players ── */}
-      <span className="section-label block" style={{ marginBottom: 12 }}>Players</span>
-      <div className="flex" style={{ gap: 8, marginBottom: 24 }}>
-        {[2, 3, 4].map(n => (
-          <button
-            key={n}
-            onClick={() => setSpots(n)}
-            className="flex-1 font-bold transition-colors"
-            style={{
-              fontSize: 18,
-              padding: '12px 0',
-              borderRadius: 12,
-              border: spots === n ? '1px solid rgba(34,197,94,0.4)' : '1px solid #2E2E2E',
-              backgroundColor: spots === n ? 'rgba(34,197,94,0.06)' : '#1A1A1A',
-              color: spots === n ? '#22C55E' : '#9CA3AF',
-            }}
-          >
-            {n}
-          </button>
-        ))}
-      </div>
-
-      {/* ── Courses ── */}
-      <span className="section-label block" style={{ marginBottom: 12 }}>Courses</span>
-      {loadingCourses ? (
-        <div className="flex flex-wrap" style={{ gap: 8, marginBottom: 28 }}>
-          {[1, 2, 3, 4, 5].map(i => (
-            <div key={i} className="skeleton" style={{ height: 36, width: 112 }} />
-          ))}
-        </div>
-      ) : (
-        <div className="flex flex-wrap" style={{ gap: 8, marginBottom: 28 }}>
-          {/* "Any of my courses" chip */}
-          <button
-            onClick={toggleAllCourses}
-            className="flex items-center transition-colors"
-            style={{
-              gap: 6,
-              padding: '8px 16px',
-              borderRadius: 20,
-              fontSize: 14,
-              fontWeight: 500,
-              border: `1px solid ${allCourses ? '#22C55E' : '#2E2E2E'}`,
-              color: allCourses ? '#22C55E' : '#9CA3AF',
-              backgroundColor: allCourses ? 'rgba(34,197,94,0.1)' : '#1A1A1A',
-            }}
-          >
-            {allCourses && (
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#22C55E" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                <polyline points="20 6 9 17 4 12" />
-              </svg>
-            )}
-            Any of my courses
-          </button>
-
-          {courses.map(course => {
-            const isSelected = selectedCourseIds.has(course.id) && !allCourses
+      <section className="space-y-2.5">
+        <h3 className="text-xs font-body font-semibold uppercase tracking-widest text-muted-foreground">
+          Time
+        </h3>
+        <div className="flex gap-2">
+          {(Object.keys(TIME_WINDOWS) as TimeWindow[]).map(key => {
+            const isSelected = selectedTime === key
+            const Icon = timeIcons[key]
             return (
               <button
-                key={course.id}
-                onClick={() => {
-                  if (allCourses) {
-                    setAllCourses(false)
-                    setSelectedCourseIds(new Set([course.id]))
-                  } else {
-                    toggleCourse(course.id)
-                  }
-                }}
-                className="flex items-center transition-colors"
-                style={{
-                  gap: 6,
-                  padding: '8px 16px',
-                  borderRadius: 20,
-                  fontSize: 14,
-                  fontWeight: 500,
-                  border: `1px solid ${isSelected ? '#22C55E' : '#2E2E2E'}`,
-                  color: isSelected ? '#22C55E' : '#9CA3AF',
-                  backgroundColor: isSelected ? 'rgba(34,197,94,0.1)' : '#1A1A1A',
-                }}
+                key={key}
+                onClick={() => setSelectedTime(key)}
+                className={`flex-1 flex items-center justify-center gap-1.5 h-11 rounded-xl text-sm font-body font-medium transition-all duration-150 active:scale-95 select-none border ${
+                  isSelected
+                    ? 'bg-primary/15 text-primary border-primary/40'
+                    : 'bg-transparent text-muted-foreground border-border hover:border-foreground/20'
+                }`}
               >
-                {isSelected && (
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#22C55E" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                    <polyline points="20 6 9 17 4 12" />
-                  </svg>
-                )}
-                {course.name}
+                <Icon />
+                {TIME_WINDOWS[key].label}
               </button>
             )
           })}
         </div>
-      )}
 
-      {/* ── CONFIRM ── */}
-      <span className="section-label block" style={{ marginBottom: 12 }}>Confirm</span>
+        {selectedTime === 'custom' && (
+          <div className="flex gap-3">
+            <div className="flex-1 flex flex-col gap-1.5">
+              <span className="text-xs font-body text-muted-foreground">From</span>
+              <select
+                value={customStart}
+                onChange={e => setCustomStart(e.target.value)}
+                className="h-11 rounded-xl border border-border bg-card text-foreground font-body text-sm px-3 focus:outline-none focus:border-primary transition-colors appearance-none"
+              >
+                {TIME_OPTIONS.map(opt => (
+                  <option key={opt.value} value={opt.value}>{opt.label}</option>
+                ))}
+              </select>
+            </div>
+            <div className="flex-1 flex flex-col gap-1.5">
+              <span className="text-xs font-body text-muted-foreground">To</span>
+              <select
+                value={customEnd}
+                onChange={e => setCustomEnd(e.target.value)}
+                className="h-11 rounded-xl border border-border bg-card text-foreground font-body text-sm px-3 focus:outline-none focus:border-primary transition-colors appearance-none"
+              >
+                {TIME_OPTIONS.map(opt => (
+                  <option key={opt.value} value={opt.value}>{opt.label}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+        )}
+      </section>
 
-      <div
-        className="flex items-center"
-        style={{
-          gap: 14,
-          backgroundColor: '#1A1A1A',
-          border: '1px solid rgba(34,197,94,0.3)',
-          borderRadius: 16,
-          padding: '16px 20px',
-          marginBottom: 16,
-        }}
-      >
-        <div
-          className="rounded-full flex items-center justify-center shrink-0"
-          style={{ width: 40, height: 40, backgroundColor: 'rgba(34,197,94,0.12)' }}
-        >
-          <FlagIcon size={18} />
+      {/* ── Players ── */}
+      <section className="space-y-2.5">
+        <h3 className="text-xs font-body font-semibold uppercase tracking-widest text-muted-foreground">
+          Players
+        </h3>
+        <div className="flex gap-2">
+          {[2, 3, 4].map(n => (
+            <button
+              key={n}
+              onClick={() => setSpots(n)}
+              className={`flex-1 py-3 rounded-xl text-lg font-display font-bold transition-all duration-150 active:scale-95 select-none border text-center ${
+                spots === n
+                  ? 'bg-primary/15 text-primary border-primary/40'
+                  : 'bg-transparent text-muted-foreground border-border hover:border-foreground/20'
+              }`}
+            >
+              {n}
+            </button>
+          ))}
         </div>
-        <span className="text-white font-medium" style={{ fontSize: 14 }}>{confirmText}</span>
-      </div>
+      </section>
+
+      {/* ── Courses ── */}
+      <section className="space-y-2.5">
+        <h3 className="text-xs font-body font-semibold uppercase tracking-widest text-muted-foreground">
+          Courses
+        </h3>
+        {loadingCourses ? (
+          <div className="flex flex-wrap gap-2">
+            {[1, 2, 3, 4, 5].map(i => (
+              <div key={i} className="skeleton" style={{ height: 36, width: 112 }} />
+            ))}
+          </div>
+        ) : courses.length === 0 ? (
+          <p className="text-sm font-body text-muted-foreground">
+            No courses added yet.{' '}
+            <button onClick={() => navigate('/profile')} className="text-primary underline">
+              Add courses
+            </button>{' '}
+            in your profile.
+          </p>
+        ) : (
+          <div className="flex flex-wrap gap-2">
+            <button
+              onClick={toggleAllCourses}
+              className={`flex items-center gap-1.5 px-3.5 py-2 rounded-full text-sm font-body font-medium transition-all duration-150 active:scale-95 select-none border ${
+                allCourses
+                  ? 'bg-primary/15 text-primary border-primary/40'
+                  : 'bg-transparent text-muted-foreground border-border hover:border-foreground/20'
+              }`}
+            >
+              {allCourses && (
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" className="text-primary">
+                  <polyline points="20 6 9 17 4 12" />
+                </svg>
+              )}
+              Any of my courses
+            </button>
+
+            {courses.map(course => {
+              const isSelected = selectedCourseIds.has(course.id) && !allCourses
+              return (
+                <button
+                  key={course.id}
+                  onClick={() => {
+                    if (allCourses) {
+                      setAllCourses(false)
+                      setSelectedCourseIds(new Set([course.id]))
+                    } else {
+                      toggleCourse(course.id)
+                    }
+                  }}
+                  className={`flex items-center gap-1.5 px-3.5 py-2 rounded-full text-sm font-body font-medium transition-all duration-150 active:scale-95 select-none border ${
+                    isSelected
+                      ? 'bg-primary/15 text-primary border-primary/40'
+                      : 'bg-transparent text-muted-foreground border-border hover:border-foreground/20'
+                  }`}
+                >
+                  {isSelected && (
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" className="text-primary">
+                      <polyline points="20 6 9 17 4 12" />
+                    </svg>
+                  )}
+                  {course.name}
+                </button>
+              )
+            })}
+          </div>
+        )}
+      </section>
+
+      {/* ── Confirm summary ── */}
+      <section className="space-y-3">
+        <h3 className="text-xs font-body font-semibold uppercase tracking-widest text-muted-foreground">
+          Confirm
+        </h3>
+
+        <div className="flex items-center gap-3.5 bg-card border border-primary/30 rounded-2xl p-4">
+          <div className="w-10 h-10 rounded-full bg-primary/12 flex items-center justify-center shrink-0">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-primary">
+              <path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z" />
+              <line x1="4" y1="22" x2="4" y2="15" />
+            </svg>
+          </div>
+          <span className="text-sm font-body font-medium text-foreground">{confirmText}</span>
+        </div>
+      </section>
 
       {/* ── Start Watching Button ── */}
       <button
         onClick={handleNext}
         disabled={!canProceed}
-        className="w-full flex items-center justify-center bg-green-primary hover:bg-green-hover text-white font-bold transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
-        style={{ gap: 10, height: 56, borderRadius: 16, fontSize: 16, marginBottom: 12 }}
+        className="w-full h-14 flex items-center justify-center gap-2 bg-primary hover:bg-green-hover text-primary-foreground font-bold rounded-xl transition-colors disabled:opacity-30 disabled:cursor-not-allowed text-base font-body"
       >
-        <FlagIcon size={16} color="white" />
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z" />
+          <line x1="4" y1="22" x2="4" y2="15" />
+        </svg>
         Start Watching
       </button>
 
-      <p className="text-text-secondary text-center" style={{ fontSize: 13 }}>
+      <p className="text-xs font-body text-muted-foreground text-center">
         We'll notify you when a matching tee time opens up.
       </p>
     </div>

@@ -10,21 +10,33 @@ import StartRound from './pages/StartRound'
 import StartRoundWho from './pages/StartRoundWho'
 import RoundDetail from './pages/RoundDetail'
 import SharePage from './pages/SharePage'
+import OnboardCourses from './pages/OnboardCourses'
 import Terms from './pages/Terms'
 import Privacy from './pages/Privacy'
 import type { ReactNode } from 'react'
 
+function SplashScreen() {
+  return (
+    <div className="flex flex-col items-center justify-center h-full bg-background">
+      <h1 className="text-4xl font-display tracking-tight text-foreground">The Starter</h1>
+      <div className="w-8 h-[3px] bg-primary rounded-full mt-3" />
+    </div>
+  )
+}
+
 function ProtectedRoute({ children }: { children: ReactNode }) {
+  const { user, loading, needsOnboarding } = useAuth()
+
+  if (loading) return <SplashScreen />
+  if (!user) return <Navigate to="/" replace />
+  if (needsOnboarding) return <Navigate to="/onboard/courses" replace />
+  return <>{children}</>
+}
+
+function OnboardRoute({ children }: { children: ReactNode }) {
   const { user, loading } = useAuth()
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center h-full bg-dark-bg">
-        <div className="w-8 h-8 border-2 border-green-primary border-t-transparent rounded-full animate-spin" />
-      </div>
-    )
-  }
-
+  if (loading) return <SplashScreen />
   if (!user) return <Navigate to="/" replace />
   return <>{children}</>
 }
@@ -32,14 +44,7 @@ function ProtectedRoute({ children }: { children: ReactNode }) {
 function PublicRoute({ children }: { children: ReactNode }) {
   const { user, loading } = useAuth()
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center h-full bg-dark-bg">
-        <div className="w-8 h-8 border-2 border-green-primary border-t-transparent rounded-full animate-spin" />
-      </div>
-    )
-  }
-
+  if (loading) return <SplashScreen />
   if (user) return <Navigate to="/home" replace />
   return <>{children}</>
 }
@@ -50,6 +55,8 @@ function AppRoutes() {
       <Route path="/" element={<PublicRoute><Welcome /></PublicRoute>} />
       <Route path="/signup" element={<PublicRoute><SignUp /></PublicRoute>} />
       <Route path="/login" element={<PublicRoute><LogIn /></PublicRoute>} />
+
+      <Route path="/onboard/courses" element={<OnboardRoute><OnboardCourses /></OnboardRoute>} />
 
       <Route element={<ProtectedRoute><Layout /></ProtectedRoute>}>
         <Route path="/home" element={<Home />} />
