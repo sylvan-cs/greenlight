@@ -30,7 +30,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [needsOnboarding, setNeedsOnboarding] = useState(false)
 
   useEffect(() => {
-    supabase.auth.getSession().then(async ({ data: { session } }) => {
+    const sessionPromise = supabase.auth.getSession().then(async ({ data: { session } }) => {
       setSession(session)
       setUser(session?.user ?? null)
 
@@ -41,6 +41,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       setLoading(false)
     })
+
+    // Fallback: if session check hangs (e.g. LockManager timeout), unblock the app
+    const timeout = setTimeout(() => {
+      setLoading((current) => {
+        if (current) {
+          console.warn('Auth session check timed out — treating as unauthenticated')
+        }
+        return false
+      })
+    }, 3000)
+
+    sessionPromise.finally(() => clearTimeout(timeout))
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (_event, session) => {
