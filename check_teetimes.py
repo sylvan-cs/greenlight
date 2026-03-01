@@ -34,6 +34,10 @@ os.makedirs(RESULTS_DIR, exist_ok=True)
 
 SPRING_DATE = (datetime.now() + timedelta(days=90)).strftime("%Y-%m-%d")
 NEAR_DATE = (datetime.now() + timedelta(days=3)).strftime("%Y-%m-%d")
+TODAY = datetime.now().strftime("%Y-%m-%d")
+
+# Will be populated at runtime from open rounds in Supabase
+DATES_TO_CHECK: list[tuple[str, str]] = []  # [(label, "YYYY-MM-DD"), ...]
 
 # ── Course configuration ────────────────────────────────────────────────
 COURSES = [
@@ -197,6 +201,53 @@ def _filter_courses(courses, config):
     return [c for c in courses if course_flags.get(c["key"], {}).get("enabled", False)]
 
 
+def _build_dates_to_check():
+    """Build the list of dates to scan: user-requested round dates + near/spring fallbacks."""
+    global DATES_TO_CHECK
+
+    dates = set()
+
+    # Always include the hardcoded fallback dates
+    dates.add(NEAR_DATE)
+    dates.add(SPRING_DATE)
+
+    # Query Supabase for dates from open rounds
+    supabase_url = os.environ.get("SUPABASE_URL", "")
+    supabase_key = os.environ.get("SUPABASE_SERVICE_KEY", "")
+    if supabase_url and supabase_key:
+        try:
+            from supabase import create_client
+            sb = create_client(supabase_url, supabase_key)
+            resp = (
+                sb.table("rounds")
+                .select("round_date")
+                .eq("status", "open")
+                .gte("round_date", TODAY)
+                .execute()
+            )
+            for row in (resp.data or []):
+                rd = row.get("round_date")
+                if rd:
+                    dates.add(rd)
+            print(f"  Open-round dates from Supabase: {len(resp.data or [])} rounds")
+        except Exception as e:
+            print(f"  Warning: could not fetch round dates from Supabase: {e}")
+
+    # Sort chronologically and assign labels
+    sorted_dates = sorted(dates)
+    DATES_TO_CHECK = []
+    for d in sorted_dates:
+        if d == NEAR_DATE:
+            label = "near"
+        elif d == SPRING_DATE:
+            label = "spring"
+        else:
+            label = d  # use the date itself as the label
+        DATES_TO_CHECK.append((label, d))
+
+    print(f"  Dates to check: {', '.join(d for _, d in DATES_TO_CHECK)}")
+
+
 def run(scan_all=False):
     config = _load_config()
 
@@ -208,7 +259,7 @@ def run(scan_all=False):
         print("GreenLight - Tee Time Availability Checker")
 
     print(f"Run: {datetime.now().isoformat()}")
-    print(f"Dates: {NEAR_DATE} (near) / {SPRING_DATE} (spring)")
+    _build_dates_to_check()
     print(f"Courses: {len(active_courses)} of {len(COURSES)} enabled\n")
 
     if not active_courses:
@@ -323,7 +374,7 @@ def check_golfnow(context, courses):
         page.on("request", on_request)
         page.on("response", on_response)
 
-        for label, date in [("near", NEAR_DATE), ("spring", SPRING_DATE)]:
+        for label, date in DATES_TO_CHECK:
             print(f"\n  [{label}] Loading {date}...")
             date_result = _golfnow_load_date(page, course["slug"], date)
             result["dates_checked"][label] = date_result
@@ -499,8 +550,8 @@ def check_chronogolf(context, courses):
         if not course_uuid:
             print("    WARNING: No course UUID found, skipping tee time checks")
             result["dates_checked"] = {
-                "near": {"date": NEAR_DATE, "status": "error", "error": "no course UUID"},
-                "spring": {"date": SPRING_DATE, "status": "error", "error": "no course UUID"},
+                label: {"date": d, "status": "error", "error": "no course UUID"}
+                for label, d in DATES_TO_CHECK
             }
             results[course["key"]] = result
             continue
@@ -522,7 +573,7 @@ def check_chronogolf(context, courses):
         page.on("response", on_response)
 
         # Step 2: Load teetimes page for each date
-        for label, date in [("near", NEAR_DATE), ("spring", SPRING_DATE)]:
+        for label, date in DATES_TO_CHECK:
             print(f"\n  [{label}] Checking {date}...")
             api_responses.clear()
             date_result = _chronogolf_load_teetimes(page, course["slug"], date, api_responses)
@@ -530,7 +581,7 @@ def check_chronogolf(context, courses):
 
         # Step 3: Direct API call
         print(f"\n  [direct_api] Calling marketplace API directly...")
-        result["direct_api_test"] = _chronogolf_direct_api(page, course_uuid, NEAR_DATE)
+        result["direct_api_test"] = _chronogolf_direct_api(page, course_uuid, DATES_TO_CHECK[0][1])
 
         page.remove_listener("response", on_response)
         results[course["key"]] = result
@@ -757,7 +808,7 @@ def check_foreup(context, courses):
         except Exception as e:
             print(f"    Error loading booking page: {e}")
 
-        for label, date in [("near", NEAR_DATE), ("spring", SPRING_DATE)]:
+        for label, date in DATES_TO_CHECK:
             print(f"\n  [{label}] Checking {date}...")
             date_result = _foreup_check_date(page, course["course_id"], date, schedule_id)
             result["dates_checked"][label] = date_result
@@ -893,7 +944,7 @@ def check_teesnap(context, courses):
             print(f"    Error loading page: {e}")
 
         # Call the API directly for each date
-        for label, date in [("near", NEAR_DATE), ("spring", SPRING_DATE)]:
+        for label, date in DATES_TO_CHECK:
             print(f"\n  [{label}] Checking {date}...")
             date_result = _teesnap_check_date(page, base_url, course_id, date)
             result["dates_checked"][label] = date_result
