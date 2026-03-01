@@ -144,6 +144,7 @@ COURSES = [
         "system": "foreup",
         "course_id": 19850,
         "schedule_id": 2751,
+        "booking_class": 2430,
     },
     # TeeSnap courses
     {
@@ -798,19 +799,31 @@ def check_foreup(context, courses):
             "dates_checked": {},
         }
 
-        # Load the booking page once to establish session/cookies
+        # Load the booking page to establish session/cookies
         schedule_id = course.get("schedule_id", "")
-        booking_url = f"https://foreupsoftware.com/index.php/booking/{course['course_id']}/teetimes"
+        booking_class = course.get("booking_class", "")
+        booking_url = f"https://foreupsoftware.com/index.php/booking/{course['course_id']}"
         print(f"\n  Loading booking page: {booking_url}")
         try:
-            page.goto(booking_url, wait_until="domcontentloaded", timeout=30000)
+            page.goto(booking_url, wait_until="networkidle", timeout=30000)
             page.wait_for_timeout(3000)
+
+            # If a booking class is configured, click the "Public" button
+            # to establish the correct session context
+            if booking_class:
+                try:
+                    public_btn = page.get_by_text("Public", exact=True).first
+                    public_btn.click()
+                    page.wait_for_timeout(3000)
+                    print(f"    Selected 'Public' booking class ({booking_class})")
+                except Exception:
+                    print(f"    Could not click booking class button, continuing")
         except Exception as e:
             print(f"    Error loading booking page: {e}")
 
         for label, date in DATES_TO_CHECK:
             print(f"\n  [{label}] Checking {date}...")
-            date_result = _foreup_check_date(page, course["course_id"], date, schedule_id)
+            date_result = _foreup_check_date(page, course["course_id"], date, schedule_id, booking_class)
             result["dates_checked"][label] = date_result
 
         results[course["key"]] = result
@@ -821,12 +834,15 @@ def check_foreup(context, courses):
     return results
 
 
-def _foreup_check_date(page, course_id, date, schedule_id=""):
+def _foreup_check_date(page, course_id, date, schedule_id="", booking_class=""):
     """Call the ForeUP tee times API via in-browser fetch."""
+    # ForeUP expects MM-DD-YYYY date format
+    parts = date.split("-")  # YYYY-MM-DD
+    foreup_date = f"{parts[1]}-{parts[2]}-{parts[0]}"
     api_url = (
         f"https://foreupsoftware.com/index.php/api/booking/times"
-        f"?time=all&date={date}&holes=18&players=0"
-        f"&booking_class=&schedule_id={schedule_id}&specials_only=0&api_key=no_limits"
+        f"?time=all&date={foreup_date}&holes=18&players=0"
+        f"&booking_class={booking_class}&schedule_id={schedule_id}&specials_only=0&api_key=no_limits"
     )
     date_result = {"date": date, "api_url": api_url, "tee_times": [], "status": "unknown"}
 
@@ -857,17 +873,34 @@ def _foreup_check_date(page, course_id, date, schedule_id=""):
             for slot in body:
                 tt = {
                     "time": slot.get("time", ""),
+                    "start_front": slot.get("start_front", ""),
                     "price": slot.get("green_fee") or slot.get("price", ""),
                     "holes": slot.get("holes"),
                     "players_available": slot.get("available_spots") or slot.get("max_players"),
                     "booking_class": slot.get("booking_class", ""),
                 }
                 # Clean up the time display
-                if tt["time"]:
+                if tt["time"] or tt["start_front"]:
                     tee_times.append(tt)
+
+            # Validate dates — ForeUP `time` field can embed a date.
+            # If that date doesn't match the requested date, the API
+            # returned the wrong day's data; discard those results.
+            if tee_times:
+                sample_time = tee_times[0].get("time", "")
+                m = re.match(r'^(\d{4}-\d{2}-\d{2})', sample_time)
+                if m and m.group(1) != date:
+                    actual = m.group(1)
+                    print(f"    WARNING: API returned times for {actual}, not {date} — discarding {len(tee_times)} entries")
+                    date_result["status"] = "wrong_date"
+                    date_result["actual_date"] = actual
+                    date_result["discarded_count"] = len(tee_times)
+                    tee_times = []
+
             date_result["tee_times"] = tee_times
             date_result["tee_time_count"] = len(tee_times)
-            date_result["status"] = "ok" if tee_times else "no_availability"
+            if date_result["status"] != "wrong_date":
+                date_result["status"] = "ok" if tee_times else "no_availability"
 
             if body:
                 date_result["tee_time_sample_keys"] = list(body[0].keys()) if isinstance(body[0], dict) else None
@@ -1286,7 +1319,7 @@ def _sync_to_supabase(all_results, active_courses):
                         continue
 
                     time_24 = _normalize_time(
-                        tt.get("tee_time_iso") or tt.get("time") or tt.get("start_time")
+                        tt.get("tee_time_iso") or tt.get("start_front") or tt.get("time") or tt.get("start_time")
                     )
                     if not time_24:
                         continue
