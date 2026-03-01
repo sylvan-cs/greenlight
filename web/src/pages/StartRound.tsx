@@ -145,8 +145,7 @@ export default function StartRound() {
     setSelectedDayParts(prev => {
       const next = new Set(prev)
       if (next.has(part)) {
-        // Don't allow deselecting the last one
-        if (next.size > 1) next.delete(part)
+        next.delete(part)
       } else {
         next.add(part)
       }
@@ -168,7 +167,7 @@ export default function StartRound() {
     navigate('/start/times')
   }
 
-  const canProceed = selectedCourseIds.size > 0
+  const canProceed = selectedCourseIds.size > 0 && (useCustomTime || selectedDayParts.size > 0)
 
   const confirmDate = new Date(selectedDate + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
   const confirmTime = useCustomTime
