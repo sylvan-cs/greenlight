@@ -39,7 +39,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         console.warn('Auth session check timed out — treating as unauthenticated')
         setLoading(false)
       }
-    }, 5000)
+    }, 2000)
 
     // Listen for auth state changes (fires INITIAL_SESSION on startup, then SIGNED_IN/OUT etc.)
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
