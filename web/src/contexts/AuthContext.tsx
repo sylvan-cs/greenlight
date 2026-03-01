@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState, type ReactNode } from 'react'
+import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react'
 import type { User, Session } from '@supabase/supabase-js'
 import { supabase } from '../lib/supabase'
 
@@ -29,13 +29,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true)
   const [needsOnboarding, setNeedsOnboarding] = useState(false)
 
-  useEffect(() => {
-    let initialLoadDone = false
+  // Once true, never show splash/loading screen for auth again
+  const isInitialized = useRef(false)
+  // Track whether the user explicitly called signOut
+  const explicitSignOut = useRef(false)
 
+  useEffect(() => {
     // Timeout only guards the initial load — never clears an already-resolved session
     const timeout = setTimeout(() => {
-      if (!initialLoadDone) {
-        initialLoadDone = true
+      if (!isInitialized.current) {
+        isInitialized.current = true
         console.warn('Auth session check timed out — treating as unauthenticated')
         setLoading(false)
       }
@@ -43,20 +46,33 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     // Listen for auth state changes (fires INITIAL_SESSION on startup, then SIGNED_IN/OUT etc.)
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (event, session) => {
-        setSession(session)
-        setUser(session?.user ?? null)
+      async (event, eventSession) => {
+        // If we already have a session and get a SIGNED_OUT event,
+        // verify it's real before wiping state (guards against spurious events)
+        if (event === 'SIGNED_OUT' && isInitialized.current && !explicitSignOut.current) {
+          const { data: { session: verified } } = await supabase.auth.getSession()
+          if (verified) {
+            // Session is still valid — ignore this spurious SIGNED_OUT
+            console.warn('Ignored spurious SIGNED_OUT — session still valid')
+            return
+          }
+        }
+        // Reset the explicit sign-out flag after handling
+        explicitSignOut.current = false
 
-        if (session?.user && (event === 'SIGNED_IN' || event === 'INITIAL_SESSION')) {
-          const needs = await checkOnboarding(session.user.id)
+        setSession(eventSession)
+        setUser(eventSession?.user ?? null)
+
+        if (eventSession?.user && (event === 'SIGNED_IN' || event === 'INITIAL_SESSION')) {
+          const needs = await checkOnboarding(eventSession.user.id)
           setNeedsOnboarding(needs)
-        } else if (!session) {
+        } else if (!eventSession) {
           setNeedsOnboarding(false)
         }
 
         // Mark initial load complete on the first event (INITIAL_SESSION)
-        if (!initialLoadDone) {
-          initialLoadDone = true
+        if (!isInitialized.current) {
+          isInitialized.current = true
           clearTimeout(timeout)
           setLoading(false)
         }
@@ -84,6 +100,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   const signOut = async () => {
+    explicitSignOut.current = true
     await supabase.auth.signOut()
   }
 

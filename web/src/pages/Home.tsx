@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
 import { supabase } from '../lib/supabase'
@@ -164,6 +164,7 @@ export default function Home() {
   const navigate = useNavigate()
   const [rounds, setRounds] = useState<RoundWithDetails[]>([])
   const [loading, setLoading] = useState(true)
+  const hasFetched = useRef(false)
 
   const firstName = user?.user_metadata?.full_name?.split(' ')[0] ?? 'Golfer'
 
@@ -184,9 +185,14 @@ export default function Home() {
       if (!error && data) {
         setRounds(data as RoundWithDetails[])
       }
+      hasFetched.current = true
       setLoading(false)
     }
 
+    // Only show skeleton on initial fetch, not on auth state re-renders
+    if (!hasFetched.current) {
+      setLoading(true)
+    }
     fetchRounds()
   }, [user])
 

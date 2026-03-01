@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../contexts/AuthContext'
@@ -90,6 +90,7 @@ export default function StartRound() {
   const [selectedCourseIds, setSelectedCourseIds] = useState<Set<string>>(new Set(draft.courseIds))
   const [allCourses, setAllCourses] = useState(draft.courseIds.length === 0)
   const [loadingCourses, setLoadingCourses] = useState(true)
+  const hasFetchedCourses = useRef(false)
 
   useEffect(() => {
     async function fetchCourses() {
@@ -112,9 +113,14 @@ export default function StartRound() {
           setSelectedCourseIds(new Set(myCourses.map(c => c.id)))
         }
       }
+      hasFetchedCourses.current = true
       setLoadingCourses(false)
     }
 
+    // Only show skeleton on initial fetch, not on auth state re-renders
+    if (!hasFetchedCourses.current) {
+      setLoadingCourses(true)
+    }
     fetchCourses()
   }, [user]) // eslint-disable-line react-hooks/exhaustive-deps
 
