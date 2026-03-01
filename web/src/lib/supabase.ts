@@ -17,7 +17,7 @@ export const supabase =
       persistSession: true,
       detectSessionInUrl: true,
       autoRefreshToken: true,
-      lock: async (_name: string, _acquireTimeout: number, fn: () => Promise<unknown>) => {
+      lock: async <R>(_name: string, _acquireTimeout: number, fn: () => Promise<R>): Promise<R> => {
         // Bypass Navigator LockManager entirely — just execute the function directly
         return await fn()
       },
