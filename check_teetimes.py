@@ -1132,6 +1132,13 @@ def _normalize_time(time_str):
         except (ValueError, TypeError):
             pass
 
+    # Space-separated datetime: "2026-03-01 16:30" (ForeUP format)
+    m = re.match(r'^\d{4}-\d{2}-\d{2}\s+(\d{1,2}:\d{2})$', time_str)
+    if m:
+        hm = m.group(1)
+        parts = hm.split(":")
+        return f"{int(parts[0]):02d}:{parts[1]}"
+
     # AM/PM formats: "7:30 AM", "7:30AM"
     clean = re.sub(r'\s+', ' ', time_str).strip()
     for fmt in ("%I:%M %p", "%I:%M%p"):
