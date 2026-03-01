@@ -65,17 +65,18 @@ export default function RoundDetail() {
           round_courses(*, courses(*)),
           rsvps(*)
         `)
-        .eq('id', id)
+        .eq('id', id!)
         .single()
 
       if (!error && data) {
-        setRound(data as RoundWithDetails)
+        const roundData = data as unknown as RoundWithDetails
+        setRound(roundData)
 
-        if (data.matched_tee_time_id) {
+        if (roundData.matched_tee_time_id) {
           const { data: ttData, error: ttError } = await supabase
             .from('tee_times')
             .select('*, courses(*)')
-            .eq('id', data.matched_tee_time_id)
+            .eq('id', roundData.matched_tee_time_id)
             .single()
           if (ttError) console.error('Failed to fetch matched tee time:', ttError)
           if (ttData) setMatchedTeeTime(ttData as TeeTime)

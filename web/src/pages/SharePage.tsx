@@ -28,7 +28,7 @@ export default function SharePage() {
           round_courses(*, courses(*)),
           rsvps(*)
         `)
-        .eq('share_code', shareCode)
+        .eq('share_code', shareCode!)
         .single()
 
       if (error || !data) {

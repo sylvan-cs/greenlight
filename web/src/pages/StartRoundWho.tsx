@@ -4,7 +4,7 @@ import { supabase } from '../lib/supabase'
 import { useAuth } from '../contexts/AuthContext'
 import { getDraft, resetDraft } from '../lib/roundStore'
 import { generateShareCode, formatTime, formatDateShort, getTimeWindowLabel } from '../lib/helpers'
-import type { TeeTime } from '../lib/types'
+import type { TeeTime, Round } from '../lib/types'
 
 export default function StartRoundWho() {
   const navigate = useNavigate()
@@ -92,8 +92,8 @@ export default function StartRoundWho() {
         share_code: shareCode,
         status: 'open',
       })
-      .select()
-      .single()
+      .select('*')
+      .single() as unknown as { data: Round | null; error: { message: string } | null }
 
     if (roundError || !round) {
       setError(roundError?.message ?? 'Failed to create round')
