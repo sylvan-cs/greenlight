@@ -30,47 +30,43 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [needsOnboarding, setNeedsOnboarding] = useState(false)
 
   useEffect(() => {
-    const sessionPromise = supabase.auth.getSession().then(async ({ data: { session } }) => {
-      setSession(session)
-      setUser(session?.user ?? null)
+    let initialLoadDone = false
 
-      if (session?.user) {
-        const needs = await checkOnboarding(session.user.id)
-        setNeedsOnboarding(needs)
-      }
-
-      setLoading(false)
-    })
-
-    // Fallback: if session check hangs (e.g. LockManager timeout), unblock the app
+    // Timeout only guards the initial load — never clears an already-resolved session
     const timeout = setTimeout(() => {
-      setLoading((current) => {
-        if (current) {
-          console.warn('Auth session check timed out — treating as unauthenticated')
-        }
-        return false
-      })
+      if (!initialLoadDone) {
+        initialLoadDone = true
+        console.warn('Auth session check timed out — treating as unauthenticated')
+        setLoading(false)
+      }
     }, 5000)
 
-    sessionPromise.finally(() => clearTimeout(timeout))
-
+    // Listen for auth state changes (fires INITIAL_SESSION on startup, then SIGNED_IN/OUT etc.)
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (_event, session) => {
+      async (event, session) => {
         setSession(session)
         setUser(session?.user ?? null)
 
-        if (session?.user && _event === 'SIGNED_IN') {
-          setLoading(true)
+        if (session?.user && (event === 'SIGNED_IN' || event === 'INITIAL_SESSION')) {
           const needs = await checkOnboarding(session.user.id)
           setNeedsOnboarding(needs)
-          setLoading(false)
         } else if (!session) {
           setNeedsOnboarding(false)
+        }
+
+        // Mark initial load complete on the first event (INITIAL_SESSION)
+        if (!initialLoadDone) {
+          initialLoadDone = true
+          clearTimeout(timeout)
+          setLoading(false)
         }
       }
     )
 
-    return () => subscription.unsubscribe()
+    return () => {
+      subscription.unsubscribe()
+      clearTimeout(timeout)
+    }
   }, [])
 
   const signUp = async (email: string, password: string, fullName: string) => {

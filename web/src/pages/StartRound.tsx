@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../contexts/AuthContext'
-import { updateDraft, getDraft, type TimeWindow, TIME_WINDOWS } from '../lib/roundStore'
+import { updateDraft, getDraft, DAY_PARTS, DAY_PART_META, type DayPart } from '../lib/roundStore'
 import { generateDateChips, formatTime } from '../lib/helpers'
 import type { Course } from '../lib/types'
 
@@ -59,11 +59,10 @@ function ClockIcon() {
   )
 }
 
-const timeIcons: Record<TimeWindow, () => React.ReactElement> = {
+const dayPartIcons: Record<DayPart, () => React.ReactElement> = {
   morning: SunriseIcon,
   midday: SunIcon,
   afternoon: SunsetIcon,
-  custom: ClockIcon,
 }
 
 // Generate time options from 6:00 AM to 6:00 PM in 30-min increments
@@ -82,9 +81,10 @@ export default function StartRound() {
   const draft = getDraft()
 
   const [selectedDate, setSelectedDate] = useState(draft.date)
-  const [selectedTime, setSelectedTime] = useState<TimeWindow>(draft.timeWindow)
-  const [customStart, setCustomStart] = useState(draft.timeWindow === 'custom' ? draft.timeStart : '08:00')
-  const [customEnd, setCustomEnd] = useState(draft.timeWindow === 'custom' ? draft.timeEnd : '12:00')
+  const [selectedDayParts, setSelectedDayParts] = useState<Set<DayPart>>(new Set(draft.dayParts))
+  const [useCustomTime, setUseCustomTime] = useState(draft.useCustomTime)
+  const [customStart, setCustomStart] = useState(draft.useCustomTime ? draft.timeStart : '08:00')
+  const [customEnd, setCustomEnd] = useState(draft.useCustomTime ? draft.timeEnd : '12:00')
   const [spots, setSpots] = useState(draft.spots)
   const [courses, setCourses] = useState<Course[]>([])
   const [selectedCourseIds, setSelectedCourseIds] = useState<Set<string>>(new Set(draft.courseIds))
@@ -141,13 +141,29 @@ export default function StartRound() {
     })
   }
 
+  const toggleDayPart = (part: DayPart) => {
+    setSelectedDayParts(prev => {
+      const next = new Set(prev)
+      if (next.has(part)) {
+        // Don't allow deselecting the last one
+        if (next.size > 1) next.delete(part)
+      } else {
+        next.add(part)
+      }
+      return next
+    })
+    setUseCustomTime(false)
+  }
+
   const handleNext = () => {
+    const parts = Array.from(selectedDayParts)
     updateDraft({
       date: selectedDate,
-      timeWindow: selectedTime,
+      dayParts: parts,
+      useCustomTime,
       courseIds: Array.from(selectedCourseIds),
       spots,
-      ...(selectedTime === 'custom' ? { timeStart: customStart, timeEnd: customEnd } : {}),
+      ...(useCustomTime ? { timeStart: customStart, timeEnd: customEnd } : {}),
     })
     navigate('/start/times')
   }
@@ -155,9 +171,11 @@ export default function StartRound() {
   const canProceed = selectedCourseIds.size > 0
 
   const confirmDate = new Date(selectedDate + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
-  const confirmTime = selectedTime === 'custom'
+  const confirmTime = useCustomTime
     ? `${formatTime(customStart)} – ${formatTime(customEnd)}`
-    : TIME_WINDOWS[selectedTime].label
+    : selectedDayParts.size === 3
+      ? 'All Day'
+      : DAY_PARTS.filter(p => selectedDayParts.has(p)).map(p => DAY_PART_META[p].label).join(' & ')
   const confirmCourses = allCourses
     ? 'Any of your courses'
     : selectedCourseIds.size === 0
@@ -220,13 +238,13 @@ export default function StartRound() {
           Time
         </h3>
         <div className="flex gap-2">
-          {(Object.keys(TIME_WINDOWS) as TimeWindow[]).map(key => {
-            const isSelected = selectedTime === key
-            const Icon = timeIcons[key]
+          {DAY_PARTS.map(key => {
+            const isSelected = !useCustomTime && selectedDayParts.has(key)
+            const Icon = dayPartIcons[key]
             return (
               <button
                 key={key}
-                onClick={() => setSelectedTime(key)}
+                onClick={() => toggleDayPart(key)}
                 className={`flex-1 flex items-center justify-center gap-1.5 h-11 rounded-xl text-sm font-body font-medium transition-all duration-150 active:scale-95 select-none border ${
                   isSelected
                     ? 'bg-primary/15 text-primary border-primary/40'
@@ -234,13 +252,24 @@ export default function StartRound() {
                 }`}
               >
                 <Icon />
-                {TIME_WINDOWS[key].label}
+                {DAY_PART_META[key].label}
               </button>
             )
           })}
+          <button
+            onClick={() => setUseCustomTime(true)}
+            className={`flex-1 flex items-center justify-center gap-1.5 h-11 rounded-xl text-sm font-body font-medium transition-all duration-150 active:scale-95 select-none border ${
+              useCustomTime
+                ? 'bg-primary/15 text-primary border-primary/40'
+                : 'bg-transparent text-muted-foreground border-border hover:border-foreground/20'
+            }`}
+          >
+            <ClockIcon />
+            Custom
+          </button>
         </div>
 
-        {selectedTime === 'custom' && (
+        {useCustomTime && (
           <div className="flex gap-3">
             <div className="flex-1 flex flex-col gap-1.5">
               <span className="text-xs font-body text-muted-foreground">From</span>

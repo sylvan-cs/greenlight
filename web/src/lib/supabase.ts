@@ -14,10 +14,8 @@ export const supabase =
   (globalThis as Record<string, unknown>)[globalKey] as SupabaseClient<Database> ??
   ((globalThis as Record<string, unknown>)[globalKey] = createClient<Database>(supabaseUrl, supabaseAnonKey, {
     auth: {
-      storageKey: 'greenlight-auth',
-      storage: window.localStorage,
-      flowType: 'pkce',
-      detectSessionInUrl: true,
       persistSession: true,
+      detectSessionInUrl: true,
+      autoRefreshToken: true,
     },
   }))
