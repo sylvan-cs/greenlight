@@ -12,4 +12,12 @@ if (!supabaseUrl || !supabaseAnonKey) {
 const globalKey = '__greenlight_supabase' as const
 export const supabase =
   (globalThis as Record<string, unknown>)[globalKey] as SupabaseClient<Database> ??
-  ((globalThis as Record<string, unknown>)[globalKey] = createClient<Database>(supabaseUrl, supabaseAnonKey))
+  ((globalThis as Record<string, unknown>)[globalKey] = createClient<Database>(supabaseUrl, supabaseAnonKey, {
+    auth: {
+      storageKey: 'greenlight-auth',
+      storage: window.localStorage,
+      flowType: 'pkce',
+      detectSessionInUrl: true,
+      persistSession: true,
+    },
+  }))

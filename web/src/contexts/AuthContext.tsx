@@ -50,7 +50,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
         return false
       })
-    }, 3000)
+    }, 5000)
 
     sessionPromise.finally(() => clearTimeout(timeout))
 

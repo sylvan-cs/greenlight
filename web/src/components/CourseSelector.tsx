@@ -25,7 +25,8 @@ export default function CourseSelector({
       .select('*')
       .order('region')
       .order('name')
-      .then(({ data }) => {
+      .then(({ data, error }) => {
+        if (error) console.error('Failed to load courses:', error)
         if (data) setCourses(data as Course[])
         setLoadingCourses(false)
       })
