@@ -21,6 +21,7 @@ import os
 import re
 import sys
 from datetime import datetime, timedelta, timezone
+from urllib.parse import unquote
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 sys.stderr.reconfigure(encoding="utf-8", errors="replace")
@@ -159,6 +160,32 @@ COURSES = [
         "subdomain": "healdsburg",
         "course_id": 20,
     },
+    # GolfNow – California
+    {
+        "name": "Baylands Golf Links",
+        "key": "baylands",
+        "location": "Palo Alto, CA",
+        "system": "golfnow",
+        "facility_id": 9259,
+        "slug": "9259-baylands-golf-links",
+    },
+    {
+        "name": "Moffett Field Golf Club",
+        "key": "moffett_field",
+        "location": "Mountain View, CA",
+        "system": "golfnow",
+        "facility_id": 13114,
+        "slug": "13114-the-golf-club-at-moffett-field",
+    },
+    # Club Caddie courses
+    {
+        "name": "Shoreline Golf Links",
+        "key": "shoreline",
+        "location": "Mountain View, CA",
+        "system": "clubcaddie",
+        "course_id": 103422,
+        "apikey": "bcfdabab",
+    },
 ]
 
 _ANALYTICS_SUBSTRINGS = [
@@ -183,6 +210,9 @@ COURSE_SLUG_MAP = {
     "mercer_oaks": "mercer-oaks",
     "healdsburg": "healdsburg",
     "windsor": "windsor",
+    "baylands": "baylands",
+    "moffett_field": "moffett-field",
+    "shoreline": "shoreline",
 }
 
 
@@ -287,6 +317,9 @@ def run(scan_all=False):
             all_results.update(check_teesnap(context, by_system["teesnap"]))
 
         browser.close()
+
+        if "clubcaddie" in by_system:
+            all_results.update(check_clubcaddie(context, by_system["clubcaddie"]))
 
     # Save per-course JSON files and combined findings
     for key, result in all_results.items():
@@ -1087,6 +1120,139 @@ def _teesnap_check_date(page, base_url, course_id, date):
 
 
 # =========================================================================
+# Club Caddie
+# =========================================================================
+
+def check_clubcaddie(context, courses):
+    """Check all Club Caddie courses via Playwright. Returns {key: result} dict."""
+    print("\n" + "=" * 70)
+    print(f"CLUB CADDIE ({len(courses)} courses)")
+    print("=" * 70)
+
+    results = {}
+    page = context.new_page()
+
+    for course in courses:
+        print(f"\n--- {course['name']} ({course['location']}) ---")
+
+        apikey = course["apikey"]
+        base = "https://apimanager-cc11.clubcaddie.com"
+
+        result = {
+            "course": course["name"],
+            "location": course["location"],
+            "system": "ClubCaddie",
+            "course_id": course["course_id"],
+            "checked_at": datetime.now().isoformat(),
+            "dates_checked": {},
+        }
+
+        # Load the booking page once to establish session
+        first_date = DATES_TO_CHECK[0][1] if DATES_TO_CHECK else TODAY
+        parts = first_date.split("-")
+        cc_date = f"{parts[1]}%2F{parts[2]}%2F{parts[0]}"
+        booking_url = f"{base}/webapi/view/{apikey}/slots?date={cc_date}&player=1&ratetype=any"
+        print(f"\n  Loading booking page: {booking_url}")
+        try:
+            page.goto(booking_url, wait_until="networkidle", timeout=30000)
+            page.wait_for_timeout(3000)
+        except Exception as e:
+            print(f"    Error loading page: {e}")
+
+        for label, date in DATES_TO_CHECK:
+            print(f"\n  [{label}] Checking {date}...")
+            date_result = _clubcaddie_check_date(page, course, date)
+            result["dates_checked"][label] = date_result
+
+        results[course["key"]] = result
+
+    page.screenshot(path=os.path.join(RESULTS_DIR, "clubcaddie.png"))
+    print(f"\n  Screenshot: clubcaddie.png")
+    page.close()
+    return results
+
+
+def _clubcaddie_check_date(page, course, date):
+    """Fetch tee times from Club Caddie by triggering the search form via JS."""
+    parts = date.split("-")
+    cc_date = f"{parts[1]}/{parts[2]}/{parts[0]}"
+
+    date_result = {"date": date, "tee_times": [], "status": "unknown"}
+
+    try:
+        # Use in-page JS to submit the search form and capture the HTML response
+        html = page.evaluate("""
+            async ({ cc_date, courseId, apikey }) => {
+                const params = new URLSearchParams({
+                    date: cc_date,
+                    player: '1',
+                    CourseId: courseId,
+                    apikey: apikey,
+                    holes: 'any',
+                    fromtime: '4',
+                    totime: '23',
+                    minprice: '0',
+                    maxprice: '9999',
+                    HoleGroup: 'front',
+                    ratetype: 'any',
+                });
+                const session = localStorage.getItem('PHPSESSID');
+                if (session) params.append('Interaction', session);
+
+                const resp = await fetch('webapi/TeeTimes', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                    body: params.toString(),
+                    credentials: 'include',
+                });
+                return { status: resp.status, body: await resp.text() };
+            }
+        """, {"cc_date": cc_date, "courseId": str(course["course_id"]), "apikey": course["apikey"]})
+
+        date_result["http_status"] = html["status"]
+        body = html["body"]
+
+        # Parse slot JSON from hidden form fields
+        tee_times = []
+        for match in re.findall(r'name="slot"\s+value="([^"]*)"', body):
+            try:
+                slot = json.loads(unquote(match))
+            except (json.JSONDecodeError, ValueError):
+                continue
+
+            start_time = slot.get("StartTime", "")
+            players = slot.get("PlayersAvailable", 0)
+            lowest_price = slot.get("LowestPrice")
+
+            tt = {
+                "time": start_time[:5] if len(start_time) >= 5 else start_time,
+                "start_time": start_time[:5] if len(start_time) >= 5 else start_time,
+                "players_available": players,
+                "price": lowest_price,
+                "holes": 18,
+            }
+            tee_times.append(tt)
+
+        date_result["tee_times"] = tee_times
+        count = len(tee_times)
+        date_result["status"] = "ok" if count > 0 else "no_availability"
+        print(f"    HTTP {date_result.get('http_status', '?')} | Status: {date_result['status']}")
+        print(f"    Tee times: {count}")
+        if tee_times:
+            for tt in tee_times[:5]:
+                print(f"      {tt['time']} | ${tt['price']} | 18h | {tt['players_available']} spots")
+            if count > 5:
+                print(f"      ... and {count - 5} more")
+
+    except Exception as e:
+        date_result["status"] = "error"
+        date_result["error"] = str(e)
+        print(f"    Error: {e}")
+
+    return date_result
+
+
+# =========================================================================
 # Shared helpers
 # =========================================================================
 
@@ -1259,6 +1425,9 @@ def _build_booking_link(course, date):
         return f"https://foreupsoftware.com/index.php/booking/{course['course_id']}/teetimes"
     elif system == "teesnap":
         return f"https://{course['subdomain']}.teesnap.net"
+    elif system == "clubcaddie":
+        p = date.split("-")  # YYYY-MM-DD
+        return f"https://apimanager-cc11.clubcaddie.com/webapi/view/{course['apikey']}/slots?date={p[1]}%2F{p[2]}%2F{p[0]}"
     return None
 
 
@@ -1278,6 +1447,21 @@ def _sync_to_supabase(all_results, active_courses):
         # a) Fetch courses from DB, build slug -> UUID mapping
         courses_resp = sb.table("courses").select("id, slug").execute()
         slug_to_uuid = {row["slug"]: row["id"] for row in courses_resp.data}
+
+        # Auto-create missing courses
+        NEW_COURSES = {
+            "baylands": {"name": "Baylands Golf Links", "region": "ca", "state": "CA", "scan_enabled": True, "booking_url": "https://baylandsbw.ezlinksgolf.com/index.html#/search"},
+            "moffett-field": {"name": "Moffett Field Golf Club", "region": "ca", "state": "CA", "scan_enabled": True, "booking_url": "https://moffettfielddaily.ezlinksgolf.com/index.html#/search"},
+            "shoreline": {"name": "Shoreline Golf Links", "region": "ca", "state": "CA", "scan_enabled": True, "booking_url": "https://shoreline.clubcaddie.com"},
+        }
+        for slug, info in NEW_COURSES.items():
+            if slug not in slug_to_uuid:
+                row = {"slug": slug, **info}
+                resp = sb.table("courses").insert(row).execute()
+                if resp.data:
+                    slug_to_uuid[slug] = resp.data[0]["id"]
+                    print(f"  Supabase: created course '{slug}' ({info['name']})")
+
         print(f"\nSupabase: {len(slug_to_uuid)} courses in database")
 
         # b) Build rows to upsert

@@ -19,6 +19,9 @@
     "shark_river": { "enabled": false },
     "mercer_oaks": { "enabled": false },
     "windsor": { "enabled": true },
-    "healdsburg": { "enabled": true }
+    "healdsburg": { "enabled": true },
+    "baylands": { "enabled": true },
+    "moffett_field": { "enabled": true },
+    "shoreline": { "enabled": true }
   }
 }
