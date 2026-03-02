@@ -32,9 +32,13 @@ RESULTS_DIR = os.path.join(SCRIPT_DIR, "results")
 CONFIG_PATH = os.path.join(SCRIPT_DIR, "scan_config.json")
 os.makedirs(RESULTS_DIR, exist_ok=True)
 
-SPRING_DATE = (datetime.now() + timedelta(days=90)).strftime("%Y-%m-%d")
-NEAR_DATE = (datetime.now() + timedelta(days=3)).strftime("%Y-%m-%d")
 TODAY = datetime.now().strftime("%Y-%m-%d")
+
+# Scan the next 14 days by default (covers all near-term booking windows)
+UPCOMING_DATES = [
+    (datetime.now() + timedelta(days=d)).strftime("%Y-%m-%d")
+    for d in range(1, 15)
+]
 
 # Will be populated at runtime from open rounds in Supabase
 DATES_TO_CHECK: list[tuple[str, str]] = []  # [(label, "YYYY-MM-DD"), ...]
@@ -203,16 +207,12 @@ def _filter_courses(courses, config):
 
 
 def _build_dates_to_check():
-    """Build the list of dates to scan: user-requested round dates + near/spring fallbacks."""
+    """Build the list of dates to scan: next 14 days + any open round dates from Supabase."""
     global DATES_TO_CHECK
 
-    dates = set()
+    dates = set(UPCOMING_DATES)
 
-    # Always include the hardcoded fallback dates
-    dates.add(NEAR_DATE)
-    dates.add(SPRING_DATE)
-
-    # Query Supabase for dates from open rounds
+    # Also include dates from open rounds (may be beyond the 14-day window)
     supabase_url = os.environ.get("SUPABASE_URL", "")
     supabase_key = os.environ.get("SUPABASE_SERVICE_KEY", "")
     if supabase_url and supabase_key:
@@ -234,17 +234,9 @@ def _build_dates_to_check():
         except Exception as e:
             print(f"  Warning: could not fetch round dates from Supabase: {e}")
 
-    # Sort chronologically and assign labels
+    # Sort chronologically and assign labels (use the date itself as label)
     sorted_dates = sorted(dates)
-    DATES_TO_CHECK = []
-    for d in sorted_dates:
-        if d == NEAR_DATE:
-            label = "near"
-        elif d == SPRING_DATE:
-            label = "spring"
-        else:
-            label = d  # use the date itself as the label
-        DATES_TO_CHECK.append((label, d))
+    DATES_TO_CHECK = [(d, d) for d in sorted_dates]
 
     print(f"  Dates to check: {', '.join(d for _, d in DATES_TO_CHECK)}")
 
