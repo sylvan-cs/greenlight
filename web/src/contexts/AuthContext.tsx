@@ -26,63 +26,38 @@ async function checkOnboarding(userId: string): Promise<boolean> {
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null)
   const [session, setSession] = useState<Session | null>(null)
-  const [loading, setLoading] = useState(true)
+  const [loading, setLoading] = useState(true) // only true on first load
   const [needsOnboarding, setNeedsOnboarding] = useState(false)
-
-  // Once true, never show splash/loading screen for auth again
   const isInitialized = useRef(false)
-  // Track whether the user explicitly called signOut
-  const explicitSignOut = useRef(false)
 
   useEffect(() => {
-    // Timeout only guards the initial load — never clears an already-resolved session
-    const timeout = setTimeout(() => {
-      if (!isInitialized.current) {
-        isInitialized.current = true
-        console.warn('Auth session check timed out — treating as unauthenticated')
-        setLoading(false)
+    // Initial session check
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setSession(session)
+      setUser(session?.user ?? null)
+      isInitialized.current = true
+      setLoading(false) // this is the ONLY place loading transitions to false
+
+      // Check onboarding in background, don't block
+      if (session?.user) {
+        checkOnboarding(session.user.id).then(setNeedsOnboarding)
       }
-    }, 2000)
+    })
 
-    // Listen for auth state changes (fires INITIAL_SESSION on startup, then SIGNED_IN/OUT etc.)
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (event, eventSession) => {
-        // If we already have a session and get a SIGNED_OUT event,
-        // verify it's real before wiping state (guards against spurious events)
-        if (event === 'SIGNED_OUT' && isInitialized.current && !explicitSignOut.current) {
-          const { data: { session: verified } } = await supabase.auth.getSession()
-          if (verified) {
-            // Session is still valid — ignore this spurious SIGNED_OUT
-            console.warn('Ignored spurious SIGNED_OUT — session still valid')
-            return
-          }
-        }
-        // Reset the explicit sign-out flag after handling
-        explicitSignOut.current = false
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, eventSession) => {
+      setSession(eventSession)
+      setUser(eventSession?.user ?? null)
+      // NEVER set loading here
 
-        setSession(eventSession)
-        setUser(eventSession?.user ?? null)
-
-        if (eventSession?.user && (event === 'SIGNED_IN' || event === 'INITIAL_SESSION')) {
-          const needs = await checkOnboarding(eventSession.user.id)
-          setNeedsOnboarding(needs)
-        } else if (!eventSession) {
-          setNeedsOnboarding(false)
-        }
-
-        // Mark initial load complete on the first event (INITIAL_SESSION)
-        if (!isInitialized.current) {
-          isInitialized.current = true
-          clearTimeout(timeout)
-          setLoading(false)
-        }
+      if (event === 'SIGNED_IN' && eventSession?.user) {
+        checkOnboarding(eventSession.user.id).then(setNeedsOnboarding)
       }
-    )
+      if (event === 'SIGNED_OUT') {
+        setNeedsOnboarding(false)
+      }
+    })
 
-    return () => {
-      subscription.unsubscribe()
-      clearTimeout(timeout)
-    }
+    return () => subscription.unsubscribe()
   }, [])
 
   const signUp = async (email: string, password: string, fullName: string) => {
@@ -100,7 +75,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   const signOut = async () => {
-    explicitSignOut.current = true
     await supabase.auth.signOut()
   }
 
