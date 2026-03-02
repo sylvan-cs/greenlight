@@ -315,11 +315,10 @@ def run(scan_all=False):
             all_results.update(check_foreup(context, by_system["foreup"]))
         if "teesnap" in by_system:
             all_results.update(check_teesnap(context, by_system["teesnap"]))
-
-        browser.close()
-
         if "clubcaddie" in by_system:
             all_results.update(check_clubcaddie(context, by_system["clubcaddie"]))
+
+        browser.close()
 
     # Save per-course JSON files and combined findings
     for key, result in all_results.items():
