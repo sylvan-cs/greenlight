@@ -1182,37 +1182,41 @@ def _clubcaddie_check_date(page, course, date):
     date_result = {"date": date, "tee_times": [], "status": "unknown"}
 
     try:
-        # Use in-page JS to submit the search form and capture the HTML response
+        # Use jQuery's AJAX (already loaded on the page) to call the same
+        # endpoint the search form uses.  The page's intraction.js will
+        # automatically append the Interaction (session) parameter.
         html = page.evaluate("""
-            async ({ cc_date, courseId, apikey }) => {
-                const params = new URLSearchParams({
-                    date: cc_date,
-                    player: '1',
-                    CourseId: courseId,
-                    apikey: apikey,
-                    holes: 'any',
-                    fromtime: '4',
-                    totime: '23',
-                    minprice: '0',
-                    maxprice: '9999',
-                    HoleGroup: 'front',
-                    ratetype: 'any',
+            ({ cc_date, courseId, apikey }) => {
+                return new Promise((resolve, reject) => {
+                    $.ajax({
+                        type: 'POST',
+                        url: 'webapi/TeeTimes',
+                        data: {
+                            date: cc_date,
+                            player: '1',
+                            CourseId: courseId,
+                            apikey: apikey,
+                            holes: 'any',
+                            fromtime: '4',
+                            totime: '23',
+                            minprice: '0',
+                            maxprice: '9999',
+                            HoleGroup: 'front',
+                            ratetype: 'any',
+                        },
+                        success: function(data, textStatus, jqXHR) {
+                            resolve({ status: jqXHR.status, body: data });
+                        },
+                        error: function(jqXHR, textStatus, errorThrown) {
+                            resolve({ status: jqXHR.status || 0, body: jqXHR.responseText || '' });
+                        },
+                    });
                 });
-                const session = localStorage.getItem('PHPSESSID');
-                if (session) params.append('Interaction', session);
-
-                const resp = await fetch('webapi/TeeTimes', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-                    body: params.toString(),
-                    credentials: 'include',
-                });
-                return { status: resp.status, body: await resp.text() };
             }
         """, {"cc_date": cc_date, "courseId": str(course["course_id"]), "apikey": course["apikey"]})
 
         date_result["http_status"] = html["status"]
-        body = html["body"]
+        body = html["body"] if isinstance(html["body"], str) else ""
 
         # Parse slot JSON from hidden form fields
         tee_times = []
