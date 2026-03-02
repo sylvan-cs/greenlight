@@ -1198,7 +1198,7 @@ def _normalize_time(time_str):
     """Convert various time formats to HH:MM (24-hour)."""
     if not time_str:
         return None
-    time_str = time_str.strip()
+    time_str = str(time_str).strip()
 
     # ISO datetime: "2026-02-18T07:30:00"
     if "T" in time_str:
@@ -1311,7 +1311,7 @@ def _sync_to_supabase(all_results, active_courses):
                         continue
 
                     time_24 = _normalize_time(
-                        tt.get("tee_time_iso") or tt.get("start_front") or tt.get("time") or tt.get("start_time")
+                        tt.get("tee_time_iso") or tt.get("time") or tt.get("start_time") or tt.get("start_front")
                     )
                     if not time_24:
                         continue
