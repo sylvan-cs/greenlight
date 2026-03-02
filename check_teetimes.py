@@ -1146,15 +1146,18 @@ def check_clubcaddie(context, courses):
             "dates_checked": {},
         }
 
-        # Load the booking page once to establish session
+        # Load the booking page to establish session (page does JS redirect)
         first_date = DATES_TO_CHECK[0][1] if DATES_TO_CHECK else TODAY
         parts = first_date.split("-")
         cc_date = f"{parts[1]}%2F{parts[2]}%2F{parts[0]}"
         booking_url = f"{base}/webapi/view/{apikey}/slots?date={cc_date}&player=1&ratetype=any"
         print(f"\n  Loading booking page: {booking_url}")
         try:
-            page.goto(booking_url, wait_until="networkidle", timeout=30000)
-            page.wait_for_timeout(3000)
+            page.goto(booking_url, wait_until="domcontentloaded", timeout=30000)
+            # Wait for the JS session redirect to complete and search form to appear
+            page.wait_for_selector("#SearchForm", timeout=15000)
+            page.wait_for_timeout(2000)
+            print(f"    Page loaded, session established")
         except Exception as e:
             print(f"    Error loading page: {e}")
 
@@ -1449,17 +1452,20 @@ def _sync_to_supabase(all_results, active_courses):
 
         # Auto-create missing courses
         NEW_COURSES = {
-            "baylands": {"name": "Baylands Golf Links", "region": "ca", "state": "CA", "scan_enabled": True, "booking_url": "https://baylandsbw.ezlinksgolf.com/index.html#/search"},
-            "moffett-field": {"name": "Moffett Field Golf Club", "region": "ca", "state": "CA", "scan_enabled": True, "booking_url": "https://moffettfielddaily.ezlinksgolf.com/index.html#/search"},
-            "shoreline": {"name": "Shoreline Golf Links", "region": "ca", "state": "CA", "scan_enabled": True, "booking_url": "https://shoreline.clubcaddie.com"},
+            "baylands": {"name": "Baylands Golf Links", "region": "ca", "state": "CA", "city": "Palo Alto", "booking_system": "golfnow", "scan_enabled": True, "booking_url": "https://baylandsbw.ezlinksgolf.com/index.html#/search"},
+            "moffett-field": {"name": "Moffett Field Golf Club", "region": "ca", "state": "CA", "city": "Mountain View", "booking_system": "golfnow", "scan_enabled": True, "booking_url": "https://moffettfielddaily.ezlinksgolf.com/index.html#/search"},
+            "shoreline": {"name": "Shoreline Golf Links", "region": "ca", "state": "CA", "city": "Mountain View", "booking_system": "clubcaddie", "scan_enabled": True, "booking_url": "https://shoreline.clubcaddie.com"},
         }
         for slug, info in NEW_COURSES.items():
             if slug not in slug_to_uuid:
                 row = {"slug": slug, **info}
-                resp = sb.table("courses").insert(row).execute()
-                if resp.data:
-                    slug_to_uuid[slug] = resp.data[0]["id"]
-                    print(f"  Supabase: created course '{slug}' ({info['name']})")
+                try:
+                    resp = sb.table("courses").upsert(row, on_conflict="slug").execute()
+                    if resp.data:
+                        slug_to_uuid[slug] = resp.data[0]["id"]
+                        print(f"  Supabase: created course '{slug}' ({info['name']})")
+                except Exception as e:
+                    print(f"  Supabase: failed to create course '{slug}': {e}")
 
         print(f"\nSupabase: {len(slug_to_uuid)} courses in database")
 
