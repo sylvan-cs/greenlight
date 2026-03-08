@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
+import { supabase } from '../lib/supabase'
 
 export default function SignUp() {
   const { signUp } = useAuth()
@@ -8,6 +9,9 @@ export default function SignUp() {
   const [fullName, setFullName] = useState('')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  const [phone, setPhone] = useState('')
+  const [smsOptIn, setSmsOptIn] = useState(false)
+  const [emailOptIn, setEmailOptIn] = useState(true)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const [success, setSuccess] = useState(false)
@@ -17,14 +21,24 @@ export default function SignUp() {
     setError('')
     setLoading(true)
 
-    const { error } = await signUp(email, password, fullName)
-    setLoading(false)
-
+    const { error, userId } = await signUp(email, password, fullName)
     if (error) {
       setError(error)
-    } else {
-      setSuccess(true)
+      setLoading(false)
+      return
     }
+
+    // Save notification preferences to profile
+    if (userId) {
+      await supabase.from('profiles').update({
+        phone: phone.trim() || null,
+        sms_opt_in: smsOptIn && !!phone.trim(),
+        email_opt_in: emailOptIn,
+      }).eq('id', userId)
+    }
+
+    setLoading(false)
+    setSuccess(true)
   }
 
   if (success) {
@@ -117,6 +131,53 @@ export default function SignUp() {
               placeholder="Min. 6 characters"
             />
           </div>
+
+          {/* Notification preferences */}
+          <fieldset className="flex flex-col gap-3 pt-2">
+            <legend className="text-sm font-body font-medium text-foreground">
+              How should we reach you?
+            </legend>
+
+            <div className="flex flex-col gap-1.5">
+              <label className="flex items-center gap-2.5 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={smsOptIn}
+                  onChange={e => setSmsOptIn(e.target.checked)}
+                  className="w-4 h-4 rounded border-border accent-primary"
+                />
+                <span className="text-sm font-body text-foreground">
+                  Text me when a tee time opens up
+                </span>
+              </label>
+              {smsOptIn && (
+                <input
+                  type="tel"
+                  value={phone}
+                  onChange={e => setPhone(e.target.value)}
+                  placeholder="+1 (555) 123-4567"
+                  className="w-full h-12 px-4 bg-card border border-border rounded-xl text-foreground font-body placeholder-muted-foreground focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary transition-colors ml-[26px]"
+                  style={{ width: 'calc(100% - 26px)' }}
+                />
+              )}
+            </div>
+
+            <label className="flex items-center gap-2.5 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={emailOptIn}
+                onChange={e => setEmailOptIn(e.target.checked)}
+                className="w-4 h-4 rounded border-border accent-primary"
+              />
+              <span className="text-sm font-body text-foreground">
+                Email me when a tee time opens up
+              </span>
+            </label>
+
+            <p className="text-xs font-body text-muted-foreground/60 ml-[26px]">
+              Reply STOP to any text to opt out
+            </p>
+          </fieldset>
 
           {error && (
             <p className="text-sm font-body text-destructive" role="alert">{error}</p>

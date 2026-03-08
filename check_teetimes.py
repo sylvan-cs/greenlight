@@ -1899,7 +1899,7 @@ def _check_round_matches():
             # Get creator profile
             creator_resp = (
                 sb.table("profiles")
-                .select("full_name, phone, sms_opt_in")
+                .select("full_name, phone, sms_opt_in, email_opt_in")
                 .eq("id", round_data["creator_id"])
                 .single()
                 .execute()
@@ -1934,7 +1934,7 @@ def _check_round_matches():
             price_display = match.get("price_label", "")
             creator_notified = False
 
-            if creator_email:
+            if creator_email and (not creator or creator.get("email_opt_in", True)):
                 creator_notified = _send_match_email(
                     creator_email, course_name, time_display, date_display,
                     price_display, spots_display, booking_url, round_id,
@@ -1974,6 +1974,20 @@ def _check_round_matches():
                 if not rsvp.get("user_id"):
                     continue  # Guest RSVP, can't notify
 
+                # Get RSVP user's profile for notification preferences
+                rsvp_profile = None
+                try:
+                    rsvp_profile_resp = (
+                        sb.table("profiles")
+                        .select("phone, sms_opt_in, email_opt_in")
+                        .eq("id", rsvp["user_id"])
+                        .single()
+                        .execute()
+                    )
+                    rsvp_profile = rsvp_profile_resp.data
+                except Exception:
+                    pass
+
                 # Get RSVP user's email from auth.users
                 rsvp_email = None
                 try:
@@ -1983,7 +1997,7 @@ def _check_round_matches():
                     pass
 
                 rsvp_notified = False
-                if rsvp_email:
+                if rsvp_email and (not rsvp_profile or rsvp_profile.get("email_opt_in", True)):
                     rsvp_notified = _send_rsvp_email(
                         rsvp_email, creator_name, time_display, course_name,
                         date_display, round_data["share_code"],
@@ -1994,14 +2008,6 @@ def _check_round_matches():
                 if not rsvp_notified and twilio_sid and twilio_token and twilio_phone:
                     if sms_sent >= MAX_SMS_PER_CYCLE:
                         break
-                    rsvp_profile_resp = (
-                        sb.table("profiles")
-                        .select("phone, sms_opt_in")
-                        .eq("id", rsvp["user_id"])
-                        .single()
-                        .execute()
-                    )
-                    rsvp_profile = rsvp_profile_resp.data
                     if rsvp_profile and rsvp_profile.get("phone") and rsvp_profile.get("sms_opt_in"):
                         rsvp_message = (
                             f"\U0001f3cc\ufe0f {creator_name} found a tee time! "

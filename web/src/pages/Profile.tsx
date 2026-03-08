@@ -8,7 +8,8 @@ import type { Course } from '../lib/types'
 export default function Profile() {
   const { user, signOut } = useAuth()
   const [phone, setPhone] = useState('')
-  const [smsOptIn, setSmsOptIn] = useState(true)
+  const [smsOptIn, setSmsOptIn] = useState(false)
+  const [emailOptIn, setEmailOptIn] = useState(true)
   const [phoneSaved, setPhoneSaved] = useState(false)
   const [saving, setSaving] = useState(false)
   const [userCourses, setUserCourses] = useState<Course[]>([])
@@ -23,12 +24,13 @@ export default function Profile() {
     if (!user) return
     supabase
       .from('profiles')
-      .select('phone, sms_opt_in')
+      .select('phone, sms_opt_in, email_opt_in')
       .eq('id', user.id)
       .single()
       .then(({ data }) => {
         if (data?.phone) setPhone(data.phone)
         if (data?.sms_opt_in != null) setSmsOptIn(data.sms_opt_in)
+        if (data?.email_opt_in != null) setEmailOptIn(data.email_opt_in)
       })
   }, [user])
 
@@ -76,7 +78,7 @@ export default function Profile() {
     try {
       await supabase
         .from('profiles')
-        .update({ phone, sms_opt_in: smsOptIn })
+        .update({ phone, sms_opt_in: smsOptIn, email_opt_in: emailOptIn })
         .eq('id', user.id)
       setPhoneSaved(true)
       setTimeout(() => setPhoneSaved(false), 3000)
@@ -104,44 +106,58 @@ export default function Profile() {
 
       <hr className="border-border/40" />
 
-      {/* Phone number */}
+      {/* Notifications */}
       <section className="space-y-3">
         <h2 className="text-xs font-body font-semibold uppercase tracking-widest text-muted-foreground">
-          Phone Number
+          Notifications
         </h2>
-        <p className="text-xs font-body text-muted-foreground">
-          Get SMS alerts when a matching tee time is found.
-        </p>
-        <div className="flex gap-3">
-          <input
-            type="tel"
-            value={phone}
-            onChange={e => setPhone(e.target.value)}
-            placeholder="+1 (555) 123-4567"
-            className="flex-1 h-12 px-4 bg-card border border-border rounded-xl text-foreground font-body placeholder-muted-foreground focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary transition-colors"
-          />
-          <button
-            onClick={savePhone}
-            disabled={saving}
-            className="h-12 px-5 bg-primary hover:bg-green-hover text-primary-foreground font-bold rounded-xl transition-colors disabled:opacity-50 text-sm font-body"
-          >
-            {saving ? 'Saving\u2026' : phoneSaved ? 'Saved!' : 'Save'}
-          </button>
+
+        <div className="flex flex-col gap-1.5">
+          <label className="flex items-center gap-2.5 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={smsOptIn}
+              onChange={e => setSmsOptIn(e.target.checked)}
+              className="w-4 h-4 rounded border-border accent-primary"
+            />
+            <span className="text-sm font-body text-foreground">
+              Text me when a tee time opens up
+            </span>
+          </label>
+          <div className="flex gap-3 ml-[26px]">
+            <input
+              type="tel"
+              value={phone}
+              onChange={e => setPhone(e.target.value)}
+              placeholder="+1 (555) 123-4567"
+              className="flex-1 h-12 px-4 bg-card border border-border rounded-xl text-foreground font-body placeholder-muted-foreground focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary transition-colors"
+            />
+          </div>
         </div>
+
         <label className="flex items-center gap-2.5 cursor-pointer select-none">
           <input
             type="checkbox"
-            checked={smsOptIn}
-            onChange={e => setSmsOptIn(e.target.checked)}
+            checked={emailOptIn}
+            onChange={e => setEmailOptIn(e.target.checked)}
             className="w-4 h-4 rounded border-border accent-primary"
           />
           <span className="text-sm font-body text-foreground">
-            Send me text alerts when a tee time opens up
+            Email me when a tee time opens up
           </span>
         </label>
+
         <p className="text-xs font-body text-muted-foreground/60 ml-[26px]">
-          Reply STOP anytime to opt out
+          Reply STOP to any text to opt out
         </p>
+
+        <button
+          onClick={savePhone}
+          disabled={saving}
+          className="h-12 px-5 bg-primary hover:bg-green-hover text-primary-foreground font-bold rounded-xl transition-colors disabled:opacity-50 text-sm font-body"
+        >
+          {saving ? 'Saving\u2026' : phoneSaved ? 'Saved!' : 'Save'}
+        </button>
       </section>
 
       <hr className="border-border/40" />
