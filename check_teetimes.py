@@ -458,7 +458,6 @@ def _parse_golfnow_api_teetimes(api_bodies, facility_id):
     for body in api_bodies:
         # Dump first API response for debugging
         if facility_id in (9259, 13114):
-            # Show tee time fields (skip large facility object)
             tt_items = []
             if isinstance(body, dict):
                 tr = body.get("ttResults")
@@ -468,17 +467,23 @@ def _parse_golfnow_api_teetimes(api_bodies, facility_id):
                 tt_items = body[:2]
             if tt_items:
                 for i, item in enumerate(tt_items):
-                    # Strip nested facility object to reduce noise
-                    slim = {k: v for k, v in item.items() if k != "facility"}
-                    sample = json.dumps(slim, indent=2, default=str)[:3000]
-                    print(f"    [DEBUG] GolfNow tee time #{i} for facility {facility_id}:")
-                    for line in sample.split("\n")[:50]:
-                        print(f"      {line}")
-            else:
-                sample = json.dumps(body, indent=2, default=str)[:2000]
-                print(f"    [DEBUG] GolfNow API body for facility {facility_id}:")
-                for line in sample.split("\n")[:30]:
-                    print(f"      {line}")
+                    keys = list(item.keys())
+                    print(f"    [DEBUG] GolfNow tt#{i} keys: {keys}")
+                    # Print scalar fields (skip large nested objects)
+                    for k, v in item.items():
+                        if k in ("facility", "teeTimeRates"):
+                            continue
+                        if isinstance(v, (str, int, float, bool, type(None))):
+                            print(f"    [DEBUG]   {k}: {v}")
+                    # Show teeTimeRates summary
+                    rates = item.get("teeTimeRates", [])
+                    if rates:
+                        for ri, rate in enumerate(rates[:3]):
+                            pr = rate.get("playerRule")
+                            holes = rate.get("holeCount")
+                            gf = rate.get("greensFees", {})
+                            price = gf.get("value") if isinstance(gf, dict) else None
+                            print(f"    [DEBUG]   rate[{ri}]: playerRule={pr} holes={holes} greensFees=${price}")
 
         # Normalize: find the list of tee time objects
         items = []
