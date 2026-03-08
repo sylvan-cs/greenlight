@@ -373,6 +373,8 @@ def check_golfnow(context, courses):
 
         api_calls = []
         api_responses = []
+        # Store full JSON bodies for tee-time API responses
+        tee_time_api_bodies = []
 
         def on_request(req):
             if req.resource_type in ("xhr", "fetch"):
@@ -392,6 +394,9 @@ def check_golfnow(context, courses):
                         else type(body).__name__
                     )
                     entry["body_preview"] = json.dumps(body, indent=2)[:3000]
+                    # Capture full body from tee-time results API
+                    if "tee-time" in resp.url.lower() and resp.status == 200:
+                        tee_time_api_bodies.append(body)
                 except Exception:
                     pass
             api_responses.append(entry)
@@ -401,8 +406,9 @@ def check_golfnow(context, courses):
 
         for label, date in DATES_TO_CHECK:
             print(f"\n  [{label}] Loading {date}...")
-            date_result = _golfnow_load_date(page, course["slug"], date)
+            date_result = _golfnow_load_date(page, course, date, tee_time_api_bodies)
             result["dates_checked"][label] = date_result
+            tee_time_api_bodies.clear()
 
         interesting_calls = [c for c in api_calls if not _is_analytics(c["url"])]
         result["api_calls_captured"] = interesting_calls
@@ -435,8 +441,123 @@ def check_golfnow(context, courses):
     return results
 
 
-def _golfnow_load_date(page, slug, date):
+def _parse_golfnow_api_teetimes(api_bodies, facility_id):
+    """Parse tee times from intercepted GolfNow API JSON responses.
+
+    GolfNow API responses typically contain tee time groups with rates.
+    Common structures:
+      - Top-level list of tee time objects
+      - Dict with 'teeTimeGroups', 'teeTimes', 'results', or 'ttResults' key
+      - Each tee time has time, rate/price, and player availability fields
+
+    Player availability fields (checked in order):
+      maxPlayers, playerRule.maxPlayers, players, numberOfPlayers, spots
+    """
+    tee_times = []
+
+    for body in api_bodies:
+        # Dump first API response for debugging
+        if facility_id in (9259, 13114):
+            sample = json.dumps(body, indent=2, default=str)[:5000]
+            print(f"    [DEBUG] GolfNow API sample for facility {facility_id}:")
+            for line in sample.split("\n")[:60]:
+                print(f"      {line}")
+
+        # Normalize: find the list of tee time objects
+        items = []
+        if isinstance(body, list):
+            items = body
+        elif isinstance(body, dict):
+            for key in ("teeTimeGroups", "ttResults", "teeTimes", "results", "teeTimeResults"):
+                if key in body and isinstance(body[key], list):
+                    items = body[key]
+                    break
+            if not items:
+                # Try any list value in the dict
+                for v in body.values():
+                    if isinstance(v, list) and len(v) > 0 and isinstance(v[0], dict):
+                        items = v
+                        break
+
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+
+            # Extract time — look in multiple places
+            time_str = (
+                item.get("time") or item.get("teeTime") or item.get("startTime")
+                or item.get("teeOffTime") or item.get("formattedTime")
+            )
+            if not time_str:
+                # Check nested teeTimeDetails or similar
+                for sub_key in ("teeTimeDetails", "details"):
+                    sub = item.get(sub_key)
+                    if isinstance(sub, dict):
+                        time_str = sub.get("time") or sub.get("teeTime")
+                        break
+            if not time_str:
+                continue
+
+            tt = {"time": str(time_str).strip()}
+
+            # Extract players available
+            players = (
+                item.get("maxPlayers") or item.get("numberOfPlayers")
+                or item.get("spots") or item.get("players")
+            )
+            # Check nested playerRule
+            pr = item.get("playerRule")
+            if isinstance(pr, dict):
+                players = players or pr.get("maxPlayers") or pr.get("max")
+            # Check nested availability
+            avail = item.get("availability")
+            if isinstance(avail, dict):
+                players = players or avail.get("maxPlayers") or avail.get("spots")
+
+            if players is not None:
+                try:
+                    tt["players_available"] = int(players)
+                except (ValueError, TypeError):
+                    pass
+
+            # Extract price — check rates array and direct fields
+            price = item.get("price") or item.get("greenFee") or item.get("displayPrice")
+            rates = item.get("rates") or item.get("rate")
+            if isinstance(rates, list) and rates:
+                rate = rates[0]
+                if isinstance(rate, dict):
+                    price = price or rate.get("price") or rate.get("greenFee") or rate.get("displayPrice")
+                    # Also grab players from rate if not found yet
+                    if "players_available" not in tt:
+                        rp = rate.get("maxPlayers") or rate.get("numberOfPlayers")
+                        if rp is not None:
+                            try:
+                                tt["players_available"] = int(rp)
+                            except (ValueError, TypeError):
+                                pass
+            elif isinstance(rates, dict):
+                price = price or rates.get("price") or rates.get("greenFee")
+            if price is not None:
+                tt["price"] = str(price) if not str(price).startswith("$") else str(price)
+
+            # Extract holes
+            holes = item.get("holes") or item.get("numberOfHoles")
+            if holes is not None:
+                try:
+                    tt["holes"] = int(holes)
+                except (ValueError, TypeError):
+                    pass
+
+            tt["source"] = "api"
+            tee_times.append(tt)
+
+    return tee_times
+
+
+def _golfnow_load_date(page, course, date, api_bodies):
     """Load GolfNow facility page and extract tee time data."""
+    slug = course["slug"]
+    facility_id = course["facility_id"]
     url = f"https://www.golfnow.com/tee-times/facility/{slug}/search"
     date_result = {"date": date, "url": url, "tee_times": [], "status": "unknown"}
 
@@ -458,7 +579,16 @@ def _golfnow_load_date(page, slug, date):
 
         page.wait_for_timeout(5000)
 
-        tee_times = _extract_golfnow_teetimes(page)
+        # Try API-parsed tee times first (has player availability data)
+        tee_times = _parse_golfnow_api_teetimes(api_bodies, facility_id)
+        if tee_times:
+            print(f"    Parsed {len(tee_times)} tee times from API response")
+        else:
+            # Fall back to DOM scraping
+            tee_times = _extract_golfnow_teetimes(page)
+            if tee_times:
+                print(f"    Parsed {len(tee_times)} tee times from DOM")
+
         date_result["tee_times"] = tee_times
         date_result["tee_time_count"] = len(tee_times)
 
@@ -485,7 +615,8 @@ def _golfnow_load_date(page, slug, date):
         print(f"    Tee times: {len(tee_times)}")
         if tee_times:
             for tt in tee_times[:5]:
-                print(f"      {tt.get('time', '?')} | {tt.get('price', '?')} | {tt.get('holes', '?')}h | {tt.get('players', '?')}p")
+                spots = tt.get('players_available', tt.get('players', '?'))
+                print(f"      {tt.get('time', '?')} | {tt.get('price', '?')} | {tt.get('holes', '?')}h | {spots}p")
             if len(tee_times) > 5:
                 print(f"      ... and {len(tee_times) - 5} more")
 
@@ -498,7 +629,7 @@ def _golfnow_load_date(page, slug, date):
 
 
 def _extract_golfnow_teetimes(page):
-    """Extract tee time data from the rendered GolfNow page."""
+    """Extract tee time data from the rendered GolfNow page (DOM fallback)."""
     tee_times = []
 
     selectors = [
