@@ -458,20 +458,42 @@ def _parse_golfnow_api_teetimes(api_bodies, facility_id):
     for body in api_bodies:
         # Dump first API response for debugging
         if facility_id in (9259, 13114):
-            sample = json.dumps(body, indent=2, default=str)[:5000]
-            print(f"    [DEBUG] GolfNow API sample for facility {facility_id}:")
-            for line in sample.split("\n")[:60]:
-                print(f"      {line}")
+            # Show tee time fields (skip large facility object)
+            tt_items = []
+            if isinstance(body, dict):
+                tr = body.get("ttResults")
+                if isinstance(tr, dict):
+                    tt_items = tr.get("teeTimes", [])[:2]
+            elif isinstance(body, list) and body and isinstance(body[0], dict):
+                tt_items = body[:2]
+            if tt_items:
+                for i, item in enumerate(tt_items):
+                    # Strip nested facility object to reduce noise
+                    slim = {k: v for k, v in item.items() if k != "facility"}
+                    sample = json.dumps(slim, indent=2, default=str)[:3000]
+                    print(f"    [DEBUG] GolfNow tee time #{i} for facility {facility_id}:")
+                    for line in sample.split("\n")[:50]:
+                        print(f"      {line}")
+            else:
+                sample = json.dumps(body, indent=2, default=str)[:2000]
+                print(f"    [DEBUG] GolfNow API body for facility {facility_id}:")
+                for line in sample.split("\n")[:30]:
+                    print(f"      {line}")
 
         # Normalize: find the list of tee time objects
         items = []
         if isinstance(body, list):
             items = body
         elif isinstance(body, dict):
-            for key in ("teeTimeGroups", "ttResults", "teeTimes", "results", "teeTimeResults"):
-                if key in body and isinstance(body[key], list):
-                    items = body[key]
-                    break
+            # GolfNow nests as ttResults.teeTimes (ttResults is a dict, not a list)
+            tt_results = body.get("ttResults")
+            if isinstance(tt_results, dict) and isinstance(tt_results.get("teeTimes"), list):
+                items = tt_results["teeTimes"]
+            else:
+                for key in ("teeTimes", "teeTimeGroups", "results", "teeTimeResults"):
+                    if key in body and isinstance(body[key], list):
+                        items = body[key]
+                        break
             if not items:
                 # Try any list value in the dict
                 for v in body.values():
