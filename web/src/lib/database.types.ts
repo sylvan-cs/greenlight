@@ -121,6 +121,7 @@ export type Database = {
           round_id: string
           user_id: string | null
           name: string
+          email: string | null
           status: string
           created_at: string
         }
@@ -129,6 +130,7 @@ export type Database = {
           round_id: string
           user_id?: string | null
           name: string
+          email?: string | null
           status: string
           created_at?: string
         }
@@ -137,6 +139,7 @@ export type Database = {
           round_id?: string
           user_id?: string | null
           name?: string
+          email?: string | null
           status?: string
           created_at?: string
         }

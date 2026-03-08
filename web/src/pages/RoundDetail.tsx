@@ -209,6 +209,13 @@ export default function RoundDetail() {
         specific_course_id: bookedTime.course_id,
         matched_tee_time_id: bookedTime.id,
       } : prev)
+
+      // Send booking notification emails (fire-and-forget)
+      fetch('/api/notify-booking', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ roundId: round.id }),
+      }).catch(() => {})
     }
     setConfirming(false)
     setBookingTimeId(null)

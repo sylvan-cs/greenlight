@@ -35,6 +35,7 @@ export interface Rsvp {
   round_id: string
   user_id: string | null
   name: string
+  email: string | null
   status: 'in' | 'maybe' | 'out'
   created_at: string
 }

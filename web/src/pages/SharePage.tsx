@@ -12,6 +12,7 @@ export default function SharePage() {
   const [notFound, setNotFound] = useState(false)
 
   const [name, setName] = useState('')
+  const [email, setEmail] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [rsvpDone, setRsvpDone] = useState(false)
   const [rsvpStatus, setRsvpStatus] = useState<'in' | 'maybe' | 'out'>('in')
@@ -88,6 +89,7 @@ export default function SharePage() {
       .insert({
         round_id: round.id,
         name: name.trim(),
+        email: email.trim() || null,
         status,
       })
 
@@ -306,6 +308,22 @@ export default function SharePage() {
               placeholder="Enter your name"
               className="w-full h-12 px-4 bg-background border border-border rounded-xl text-foreground font-body placeholder-muted-foreground focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary transition-colors"
             />
+          </div>
+
+          <div className="space-y-2">
+            <h3 className="text-xs font-body font-semibold uppercase tracking-widest text-muted-foreground">
+              Email <span className="normal-case tracking-normal font-normal text-muted-foreground/50">(optional)</span>
+            </h3>
+            <input
+              type="email"
+              value={email}
+              onChange={e => setEmail(e.target.value)}
+              placeholder="you@example.com"
+              className="w-full h-12 px-4 bg-background border border-border rounded-xl text-foreground font-body placeholder-muted-foreground focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary transition-colors"
+            />
+            <p className="text-xs font-body text-muted-foreground/60">
+              We'll notify you when the tee time is confirmed
+            </p>
           </div>
 
           {error && <p className="text-sm font-body text-destructive">{error}</p>}
