@@ -20,14 +20,23 @@ export default function CourseSelector({
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set(initialSelectedIds))
 
   useEffect(() => {
+    const today = new Date()
+    const todayStr = today.toISOString().split('T')[0]
+    const future = new Date(today)
+    future.setDate(future.getDate() + 30)
+    const futureStr = future.toISOString().split('T')[0]
+
     supabase
       .from('courses')
-      .select('*')
+      .select('*, tee_times!inner(id)')
+      .eq('tee_times.is_available', true)
+      .gte('tee_times.tee_date', todayStr)
+      .lte('tee_times.tee_date', futureStr)
       .order('region')
       .order('name')
       .then(({ data, error }) => {
         if (error) console.error('Failed to load courses:', error)
-        if (data) setCourses(data as Course[])
+        if (data) setCourses(data.map(({ tee_times, ...course }) => course) as Course[])
         setLoadingCourses(false)
       })
   }, [])
