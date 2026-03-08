@@ -386,6 +386,9 @@ export default function RoundDetail() {
         <h3 className="text-xs font-body font-semibold uppercase tracking-widest text-muted-foreground">
           Share Link
         </h3>
+        <p className="text-sm font-body text-muted-foreground">
+          Send this link to invite people to your round
+        </p>
         <div className="flex items-center gap-2">
           <code className="flex-1 text-muted-foreground truncate text-[13px] font-body bg-background rounded-xl px-3 py-2.5">
             {shareUrl}
@@ -397,6 +400,9 @@ export default function RoundDetail() {
             {copied ? 'Copied!' : 'Copy'}
           </button>
         </div>
+        <p className="text-xs font-body text-muted-foreground/70">
+          Friends don't need an account to join
+        </p>
       </div>
 
       {/* ── Who's In ── */}
@@ -430,7 +436,7 @@ export default function RoundDetail() {
                     </span>
                     {i === 0 && (
                       <span className="text-[10px] font-body text-primary uppercase tracking-wider font-semibold">
-                        Anchor
+                        Organizer
                       </span>
                     )}
                   </div>
