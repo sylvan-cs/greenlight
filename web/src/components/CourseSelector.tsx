@@ -36,7 +36,7 @@ export default function CourseSelector({
       .order('name')
       .then(({ data, error }) => {
         if (error) console.error('Failed to load courses:', error)
-        if (data) setCourses(data.map(({ tee_times, ...course }) => course) as Course[])
+        if (data) setCourses(data.map((row: any) => { const { tee_times, ...course } = row; return course; }) as Course[])
         setLoadingCourses(false)
       })
   }, [])
