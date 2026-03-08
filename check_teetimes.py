@@ -444,131 +444,72 @@ def check_golfnow(context, courses):
 def _parse_golfnow_api_teetimes(api_bodies, facility_id):
     """Parse tee times from intercepted GolfNow API JSON responses.
 
-    GolfNow API responses typically contain tee time groups with rates.
-    Common structures:
-      - Top-level list of tee time objects
-      - Dict with 'teeTimeGroups', 'teeTimes', 'results', or 'ttResults' key
-      - Each tee time has time, rate/price, and player availability fields
-
-    Player availability fields (checked in order):
-      maxPlayers, playerRule.maxPlayers, players, numberOfPlayers, spots
+    GolfNow API structure (ttResults.teeTimes[]):
+      time:                  "2026-03-08T11:20:00" (ISO datetime)
+      formattedTime:         "11:20"
+      formattedTimeMeridian: "AM"
+      playerRule:            3 (integer — max players for this tee time)
+      displayRate:           110.0 (price in dollars)
+      minRateFormatted:      "$112.49" (price with fees)
+      teeTimeRates[]:        array of rate options, each with:
+        playerRule:          1 (player count for this rate)
+        holeCount:           18
+        greensFees.value:    69.0
     """
     tee_times = []
 
     for body in api_bodies:
-        # Dump first API response for debugging
-        if facility_id in (9259, 13114):
-            tt_items = []
-            if isinstance(body, dict):
-                tr = body.get("ttResults")
-                if isinstance(tr, dict):
-                    tt_items = tr.get("teeTimes", [])[:2]
-            elif isinstance(body, list) and body and isinstance(body[0], dict):
-                tt_items = body[:2]
-            if tt_items:
-                for i, item in enumerate(tt_items):
-                    keys = list(item.keys())
-                    print(f"    [DEBUG] GolfNow tt#{i} keys: {keys}")
-                    # Print scalar fields (skip large nested objects)
-                    for k, v in item.items():
-                        if k in ("facility", "teeTimeRates"):
-                            continue
-                        if isinstance(v, (str, int, float, bool, type(None))):
-                            print(f"    [DEBUG]   {k}: {v}")
-                    # Show teeTimeRates summary
-                    rates = item.get("teeTimeRates", [])
-                    if rates:
-                        for ri, rate in enumerate(rates[:3]):
-                            pr = rate.get("playerRule")
-                            holes = rate.get("holeCount")
-                            gf = rate.get("greensFees", {})
-                            price = gf.get("value") if isinstance(gf, dict) else None
-                            print(f"    [DEBUG]   rate[{ri}]: playerRule={pr} holes={holes} greensFees=${price}")
-
-        # Normalize: find the list of tee time objects
+        # Find the teeTimes list
         items = []
-        if isinstance(body, list):
-            items = body
-        elif isinstance(body, dict):
-            # GolfNow nests as ttResults.teeTimes (ttResults is a dict, not a list)
+        if isinstance(body, dict):
             tt_results = body.get("ttResults")
             if isinstance(tt_results, dict) and isinstance(tt_results.get("teeTimes"), list):
                 items = tt_results["teeTimes"]
-            else:
-                for key in ("teeTimes", "teeTimeGroups", "results", "teeTimeResults"):
-                    if key in body and isinstance(body[key], list):
-                        items = body[key]
-                        break
-            if not items:
-                # Try any list value in the dict
-                for v in body.values():
-                    if isinstance(v, list) and len(v) > 0 and isinstance(v[0], dict):
-                        items = v
-                        break
+        if not items:
+            continue
 
         for item in items:
             if not isinstance(item, dict):
                 continue
 
-            # Extract time — look in multiple places
-            time_str = (
-                item.get("time") or item.get("teeTime") or item.get("startTime")
-                or item.get("teeOffTime") or item.get("formattedTime")
-            )
+            # Time: prefer "time" (ISO datetime), fall back to formattedTime
+            time_str = item.get("time")
             if not time_str:
-                # Check nested teeTimeDetails or similar
-                for sub_key in ("teeTimeDetails", "details"):
-                    sub = item.get(sub_key)
-                    if isinstance(sub, dict):
-                        time_str = sub.get("time") or sub.get("teeTime")
-                        break
+                ft = item.get("formattedTime")
+                fm = item.get("formattedTimeMeridian", "")
+                if ft:
+                    time_str = f"{ft} {fm}".strip()
             if not time_str:
                 continue
 
             tt = {"time": str(time_str).strip()}
 
-            # Extract players available
-            players = (
-                item.get("maxPlayers") or item.get("numberOfPlayers")
-                or item.get("spots") or item.get("players")
-            )
-            # Check nested playerRule
+            # Players available: top-level playerRule is the max players
             pr = item.get("playerRule")
-            if isinstance(pr, dict):
-                players = players or pr.get("maxPlayers") or pr.get("max")
-            # Check nested availability
-            avail = item.get("availability")
-            if isinstance(avail, dict):
-                players = players or avail.get("maxPlayers") or avail.get("spots")
-
-            if players is not None:
+            if pr is not None:
                 try:
-                    tt["players_available"] = int(players)
+                    tt["players_available"] = int(pr)
                 except (ValueError, TypeError):
                     pass
 
-            # Extract price — check rates array and direct fields
-            price = item.get("price") or item.get("greenFee") or item.get("displayPrice")
-            rates = item.get("rates") or item.get("rate")
-            if isinstance(rates, list) and rates:
-                rate = rates[0]
-                if isinstance(rate, dict):
-                    price = price or rate.get("price") or rate.get("greenFee") or rate.get("displayPrice")
-                    # Also grab players from rate if not found yet
-                    if "players_available" not in tt:
-                        rp = rate.get("maxPlayers") or rate.get("numberOfPlayers")
-                        if rp is not None:
-                            try:
-                                tt["players_available"] = int(rp)
-                            except (ValueError, TypeError):
-                                pass
-            elif isinstance(rates, dict):
-                price = price or rates.get("price") or rates.get("greenFee")
-            if price is not None:
-                tt["price"] = str(price) if not str(price).startswith("$") else str(price)
+            # Price: use displayRate (dollars) or minRateFormatted (string)
+            display_rate = item.get("displayRate")
+            if display_rate is not None:
+                try:
+                    tt["price"] = f"${display_rate:.0f}" if float(display_rate) == int(float(display_rate)) else f"${display_rate:.2f}"
+                except (ValueError, TypeError):
+                    pass
+            if "price" not in tt:
+                formatted = item.get("minRateFormatted")
+                if formatted:
+                    tt["price"] = str(formatted)
 
-            # Extract holes
-            holes = item.get("holes") or item.get("numberOfHoles")
+            # Holes: from teeTimeRates or multipleHolesRate
+            holes = item.get("multipleHolesRate")
+            if holes is None:
+                rates = item.get("teeTimeRates")
+                if isinstance(rates, list) and rates:
+                    holes = rates[0].get("holeCount")
             if holes is not None:
                 try:
                     tt["holes"] = int(holes)
