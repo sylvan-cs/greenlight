@@ -29,14 +29,17 @@ export type Database = {
         Row: {
           id: string
           phone: string | null
+          sms_opt_in: boolean
         }
         Insert: {
           id: string
           phone?: string | null
+          sms_opt_in?: boolean
         }
         Update: {
           id?: string
           phone?: string | null
+          sms_opt_in?: boolean
         }
         Relationships: []
       }

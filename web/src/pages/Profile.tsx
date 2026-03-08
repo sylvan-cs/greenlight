@@ -8,6 +8,7 @@ import type { Course } from '../lib/types'
 export default function Profile() {
   const { user, signOut } = useAuth()
   const [phone, setPhone] = useState('')
+  const [smsOptIn, setSmsOptIn] = useState(true)
   const [phoneSaved, setPhoneSaved] = useState(false)
   const [saving, setSaving] = useState(false)
   const [userCourses, setUserCourses] = useState<Course[]>([])
@@ -22,11 +23,12 @@ export default function Profile() {
     if (!user) return
     supabase
       .from('profiles')
-      .select('phone')
+      .select('phone, sms_opt_in')
       .eq('id', user.id)
       .single()
       .then(({ data }) => {
         if (data?.phone) setPhone(data.phone)
+        if (data?.sms_opt_in != null) setSmsOptIn(data.sms_opt_in)
       })
   }, [user])
 
@@ -74,7 +76,7 @@ export default function Profile() {
     try {
       await supabase
         .from('profiles')
-        .update({ phone })
+        .update({ phone, sms_opt_in: smsOptIn })
         .eq('id', user.id)
       setPhoneSaved(true)
       setTimeout(() => setPhoneSaved(false), 3000)
@@ -126,6 +128,20 @@ export default function Profile() {
             {saving ? 'Saving\u2026' : phoneSaved ? 'Saved!' : 'Save'}
           </button>
         </div>
+        <label className="flex items-center gap-2.5 cursor-pointer select-none">
+          <input
+            type="checkbox"
+            checked={smsOptIn}
+            onChange={e => setSmsOptIn(e.target.checked)}
+            className="w-4 h-4 rounded border-border accent-primary"
+          />
+          <span className="text-sm font-body text-foreground">
+            Send me text alerts when a tee time opens up
+          </span>
+        </label>
+        <p className="text-xs font-body text-muted-foreground/60 ml-[26px]">
+          Reply STOP anytime to opt out
+        </p>
       </section>
 
       <hr className="border-border/40" />

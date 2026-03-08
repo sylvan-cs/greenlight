@@ -1899,7 +1899,7 @@ def _check_round_matches():
             # Get creator profile
             creator_resp = (
                 sb.table("profiles")
-                .select("full_name, phone")
+                .select("full_name, phone, sms_opt_in")
                 .eq("id", round_data["creator_id"])
                 .single()
                 .execute()
@@ -1948,7 +1948,7 @@ def _check_round_matches():
             if spots_display:
                 sms_details += f" \u00b7 {spots_display} spots"
 
-            if not creator_notified and creator and creator.get("phone") and twilio_sid and twilio_token and twilio_phone:
+            if not creator_notified and creator and creator.get("phone") and creator.get("sms_opt_in") and twilio_sid and twilio_token and twilio_phone:
                 message = (
                     f"\U0001f3cc\ufe0f Tee time found!\n"
                     f"{time_display} at {course_name}\n"
@@ -1996,13 +1996,13 @@ def _check_round_matches():
                         break
                     rsvp_profile_resp = (
                         sb.table("profiles")
-                        .select("phone")
+                        .select("phone, sms_opt_in")
                         .eq("id", rsvp["user_id"])
                         .single()
                         .execute()
                     )
                     rsvp_profile = rsvp_profile_resp.data
-                    if rsvp_profile and rsvp_profile.get("phone"):
+                    if rsvp_profile and rsvp_profile.get("phone") and rsvp_profile.get("sms_opt_in"):
                         rsvp_message = (
                             f"\U0001f3cc\ufe0f {creator_name} found a tee time! "
                             f"{time_display} at {course_name} on {date_display}. "
