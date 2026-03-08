@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo } from 'react'
 import { supabase } from '../lib/supabase'
+import { useAuth } from '../contexts/AuthContext'
 import type { Course } from '../lib/types'
 
 interface CourseSelectorProps {
@@ -15,9 +16,13 @@ export default function CourseSelector({
   saveLabel = 'Continue',
   isSaving = false,
 }: CourseSelectorProps) {
+  const { user } = useAuth()
   const [courses, setCourses] = useState<Course[]>([])
+  const [njCourses, setNjCourses] = useState<Course[]>([])
   const [loadingCourses, setLoadingCourses] = useState(true)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set(initialSelectedIds))
+  const [requestName, setRequestName] = useState('')
+  const [requestStatus, setRequestStatus] = useState<'idle' | 'sending' | 'sent'>('idle')
 
   useEffect(() => {
     const today = new Date()
@@ -26,19 +31,28 @@ export default function CourseSelector({
     future.setDate(future.getDate() + 30)
     const futureStr = future.toISOString().split('T')[0]
 
-    supabase
+    const activeFetch = supabase
       .from('courses')
       .select('*, tee_times!inner(id)')
       .eq('tee_times.is_available', true)
       .gte('tee_times.tee_date', todayStr)
       .lte('tee_times.tee_date', futureStr)
+      .neq('region', 'nj')
       .order('region')
       .order('name')
-      .then(({ data, error }) => {
-        if (error) console.error('Failed to load courses:', error)
-        if (data) setCourses(data.map((row: any) => { const { tee_times, ...course } = row; return course; }) as Course[])
-        setLoadingCourses(false)
-      })
+
+    const njFetch = supabase
+      .from('courses')
+      .select('id, name, city, region, booking_url')
+      .eq('region', 'nj')
+      .order('name')
+
+    Promise.all([activeFetch, njFetch]).then(([activeRes, njRes]) => {
+      if (activeRes.error) console.error('Failed to load courses:', activeRes.error)
+      if (activeRes.data) setCourses(activeRes.data.map((row: any) => { const { tee_times, ...course } = row; return course; }) as Course[])
+      if (njRes.data) setNjCourses(njRes.data as Course[])
+      setLoadingCourses(false)
+    })
   }, [])
 
   const coursesByRegion = useMemo(() => {
@@ -110,6 +124,60 @@ export default function CourseSelector({
           </div>
         </section>
       ))}
+
+      {njCourses.length > 0 && (
+        <section className="space-y-2.5 opacity-50">
+          <h3 className="text-xs font-body font-semibold uppercase tracking-widest text-muted-foreground">
+            🌱 New Jersey · Opening Spring 2026
+          </h3>
+          <div className="flex flex-wrap gap-2">
+            {njCourses.map(course => (
+              <span
+                key={course.id}
+                className="flex items-center px-3.5 py-2 rounded-full text-sm font-body font-medium border border-border text-muted-foreground cursor-default"
+              >
+                {course.name}
+              </span>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* Course request */}
+      <section className="space-y-2.5 pt-2">
+        <h3 className="text-xs font-body font-semibold uppercase tracking-widest text-muted-foreground">
+          Don't see your course?
+        </h3>
+        {requestStatus === 'sent' ? (
+          <p className="text-sm font-body text-primary">Got it! We'll add it soon.</p>
+        ) : (
+          <div className="flex gap-2">
+            <input
+              type="text"
+              value={requestName}
+              onChange={e => setRequestName(e.target.value)}
+              placeholder="Course name"
+              className="flex-1 h-10 px-3 rounded-lg bg-card border border-border text-sm font-body text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary/60"
+            />
+            <button
+              onClick={async () => {
+                if (!requestName.trim() || !user) return
+                setRequestStatus('sending')
+                await supabase.from('course_requests').insert({
+                  course_name: requestName.trim(),
+                  user_id: user.id,
+                })
+                setRequestStatus('sent')
+                setRequestName('')
+              }}
+              disabled={!requestName.trim() || requestStatus === 'sending'}
+              className="h-10 px-4 rounded-lg bg-card border border-border text-sm font-body font-medium text-foreground hover:border-foreground/20 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+            >
+              Request It
+            </button>
+          </div>
+        )}
+      </section>
 
       <button
         onClick={() => onSave(selectedIds)}

@@ -163,6 +163,27 @@ export type Database = {
         }
         Relationships: []
       }
+      course_requests: {
+        Row: {
+          id: string
+          course_name: string
+          user_id: string
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          course_name: string
+          user_id: string
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          course_name?: string
+          user_id?: string
+          created_at?: string
+        }
+        Relationships: []
+      }
       user_courses: {
         Row: {
           id: string
