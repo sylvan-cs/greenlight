@@ -7,7 +7,6 @@ import LogIn from './pages/LogIn'
 import Home from './pages/Home'
 import Profile from './pages/Profile'
 import StartRound from './pages/StartRound'
-import StartRoundWho from './pages/StartRoundWho'
 import RoundDetail from './pages/RoundDetail'
 import SharePage from './pages/SharePage'
 import OnboardCourses from './pages/OnboardCourses'
@@ -64,7 +63,6 @@ function AppRoutes() {
       </Route>
 
       <Route path="/start" element={<ProtectedRoute><StartRound /></ProtectedRoute>} />
-      <Route path="/start/times" element={<ProtectedRoute><StartRoundWho /></ProtectedRoute>} />
       <Route path="/round/:id" element={<ProtectedRoute><RoundDetail /></ProtectedRoute>} />
 
       <Route path="/r/:shareCode" element={<SharePage />} />

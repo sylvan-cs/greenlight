@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { formatDateShort, formatTime, getTimeWindowLabel } from '../lib/helpers'
@@ -50,9 +50,35 @@ export default function RoundDetail() {
   const [loading, setLoading] = useState(true)
   const [copied, setCopied] = useState(false)
   const [cancelling, setCancelling] = useState(false)
-  const [bookingClicked, setBookingClicked] = useState(false)
+  const [bookingTimeId, setBookingTimeId] = useState<string | null>(null)
   const [confirming, setConfirming] = useState(false)
-  const [matchedTeeTime, setMatchedTeeTime] = useState<TeeTime | null>(null)
+  const [availableTimes, setAvailableTimes] = useState<TeeTime[]>([])
+  const [loadingTimes, setLoadingTimes] = useState(true)
+
+  // Fetch available tee times matching this round's criteria
+  const fetchAvailableTimes = useCallback(async (roundData: RoundWithDetails) => {
+    const courseIds = roundData.round_courses?.map(rc => rc.course_id) ?? []
+    if (courseIds.length === 0) {
+      setAvailableTimes([])
+      setLoadingTimes(false)
+      return
+    }
+
+    const { data, error } = await supabase
+      .from('tee_times')
+      .select('*, courses(*)')
+      .in('course_id', courseIds)
+      .eq('tee_date', roundData.round_date)
+      .gte('tee_time', roundData.time_window_start)
+      .lte('tee_time', roundData.time_window_end)
+      .eq('is_available', true)
+      .order('tee_time', { ascending: true })
+
+    if (!error && data) {
+      setAvailableTimes(data as TeeTime[])
+    }
+    setLoadingTimes(false)
+  }, [])
 
   useEffect(() => {
     if (!id) return
@@ -71,16 +97,7 @@ export default function RoundDetail() {
       if (!error && data) {
         const roundData = data as unknown as RoundWithDetails
         setRound(roundData)
-
-        if (roundData.matched_tee_time_id) {
-          const { data: ttData, error: ttError } = await supabase
-            .from('tee_times')
-            .select('*, courses(*)')
-            .eq('id', roundData.matched_tee_time_id)
-            .single()
-          if (ttError) console.error('Failed to fetch matched tee time:', ttError)
-          if (ttData) setMatchedTeeTime(ttData as TeeTime)
-        }
+        fetchAvailableTimes(roundData)
       }
       setLoading(false)
     }
@@ -121,7 +138,18 @@ export default function RoundDetail() {
     return () => {
       supabase.removeChannel(channel)
     }
-  }, [id])
+  }, [id, fetchAvailableTimes])
+
+  // Poll for available times every 60 seconds while watching
+  useEffect(() => {
+    if (!round || round.status === 'booked' || round.status === 'cancelled') return
+
+    const interval = setInterval(() => {
+      fetchAvailableTimes(round)
+    }, 60_000)
+
+    return () => clearInterval(interval)
+  }, [round, fetchAvailableTimes])
 
   const handleCopy = async () => {
     if (!round) return
@@ -145,23 +173,45 @@ export default function RoundDetail() {
     setCancelling(false)
   }
 
-  const handleBook = (bookingUrl: string) => {
-    window.open(bookingUrl, '_blank', 'noopener')
-    setBookingClicked(true)
+  const handleBook = (teeTime: TeeTime) => {
+    const url = teeTime.courses?.booking_url
+    if (url) window.open(url, '_blank', 'noopener')
+    setBookingTimeId(teeTime.id)
   }
 
   const handleConfirmBooking = async () => {
-    if (!round) return
+    if (!round || !bookingTimeId) return
     setConfirming(true)
+    const bookedTime = availableTimes.find(t => t.id === bookingTimeId)
+    if (!bookedTime) {
+      setConfirming(false)
+      return
+    }
+
     const { error } = await supabase
       .from('rounds')
-      .update({ status: 'booked' })
+      .update({
+        status: 'booked',
+        has_specific_time: true,
+        specific_tee_time: bookedTime.tee_time,
+        specific_course_id: bookedTime.course_id,
+        matched_tee_time_id: bookedTime.id,
+        matched_at: new Date().toISOString(),
+      })
       .eq('id', round.id)
 
     if (!error) {
-      setRound(prev => prev ? { ...prev, status: 'booked' } : prev)
+      setRound(prev => prev ? {
+        ...prev,
+        status: 'booked',
+        has_specific_time: true,
+        specific_tee_time: bookedTime.tee_time,
+        specific_course_id: bookedTime.course_id,
+        matched_tee_time_id: bookedTime.id,
+      } : prev)
     }
     setConfirming(false)
+    setBookingTimeId(null)
   }
 
   if (loading) {
@@ -189,14 +239,25 @@ export default function RoundDetail() {
   }
 
   const courseNames = round.round_courses?.map(rc => rc.courses?.name).filter(Boolean) ?? []
-  const specificCourse = round.specific_course_id
-    ? round.round_courses?.find(rc => rc.course_id === round.specific_course_id)?.courses
-    : null
-  const bookingUrl = specificCourse?.booking_url ?? null
   const rsvps = round.rsvps ?? []
   const rsvpsIn = rsvps.filter(r => r.status === 'in')
   const shareUrl = `${window.location.origin}/r/${round.share_code}`
   const timeLabel = getTimeWindowLabel(round.time_window_start, round.time_window_end)
+
+  // Group available times by course
+  const groupedTimes = availableTimes.reduce<Record<string, TeeTime[]>>((acc, tt) => {
+    const name = tt.courses?.name ?? 'Unknown'
+    if (!acc[name]) acc[name] = []
+    acc[name].push(tt)
+    return acc
+  }, {})
+  const courseGroups = Object.entries(groupedTimes)
+  const multiCourse = courseGroups.length > 1
+
+  // For booked rounds, find the specific course
+  const bookedCourse = round.has_specific_time && round.specific_course_id
+    ? round.round_courses?.find(rc => rc.course_id === round.specific_course_id)?.courses
+    : null
 
   return (
     <div className="animate-fade-in space-y-6 pb-8 px-5 max-w-lg mx-auto">
@@ -221,164 +282,150 @@ export default function RoundDetail() {
         <StatusBadge status={round.status} />
         <div>
           <h2 className="font-display text-xl leading-tight">
-            {matchedTeeTime?.courses?.name ?? (courseNames.length > 0 ? courseNames.join(' or ') : 'No courses selected')}
+            {round.has_specific_time && bookedCourse
+              ? bookedCourse.name
+              : courseNames.length > 0 ? courseNames.join(' or ') : 'No courses selected'}
           </h2>
           <p className="text-sm font-body text-muted-foreground mt-1">
-            {matchedTeeTime
-              ? `${formatDateShort(matchedTeeTime.tee_date)} \u00b7 ${formatTime(matchedTeeTime.tee_time)}`
+            {round.has_specific_time && round.specific_tee_time
+              ? `${formatDateShort(round.round_date)} \u00b7 ${formatTime(round.specific_tee_time)}`
               : `${formatDateShort(round.round_date)} \u00b7 ${timeLabel}`}
           </p>
         </div>
       </section>
 
-      {/* ── Match Found Card ── */}
-      {round.status === 'found' && matchedTeeTime && !round.has_specific_time && (
-        <div className="bg-primary/5 border border-primary/25 rounded-2xl p-5 space-y-4">
+      {/* ── Booked Card ── */}
+      {round.status === 'booked' && round.has_specific_time && round.specific_tee_time && (
+        <div className="bg-primary/5 border border-primary/25 rounded-2xl p-5 space-y-2">
           <div className="flex items-center gap-2">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-primary">
-              <path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z" />
-              <line x1="4" y1="22" x2="4" y2="15" />
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="text-primary">
+              <polyline points="20 6 9 17 4 12" />
             </svg>
-            <span className="text-sm font-body font-semibold text-primary">Match Found!</span>
+            <span className="text-sm font-body font-semibold text-primary">Booked</span>
           </div>
-
-          <div>
-            <p className="font-display text-lg leading-tight">
-              {formatTime(matchedTeeTime.tee_time)} at {matchedTeeTime.courses?.name ?? 'Unknown Course'}
-            </p>
-            <p className="text-sm font-body text-muted-foreground mt-1">
-              {formatDateShort(matchedTeeTime.tee_date)}
-              {matchedTeeTime.price_label ? ` \u00b7 ${matchedTeeTime.price_label}` : ''}
-            </p>
-          </div>
-
-          {!bookingClicked ? (
-            <>
-              <button
-                onClick={() => matchedTeeTime.courses?.booking_url && handleBook(matchedTeeTime.courses.booking_url)}
-                disabled={!matchedTeeTime.courses?.booking_url}
-                className="w-full h-14 flex items-center justify-center gap-2 bg-primary hover:bg-green-hover text-primary-foreground font-bold rounded-xl transition-colors disabled:opacity-30 disabled:cursor-not-allowed text-base font-body"
-              >
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
-                  <polyline points="15 3 21 3 21 9" />
-                  <line x1="10" y1="14" x2="21" y2="3" />
-                </svg>
-                Book This Time
-              </button>
-              <p className="text-xs font-body text-muted-foreground text-center">
-                You'll complete the booking on {matchedTeeTime.courses?.name ?? 'the course'}'s site
-              </p>
-            </>
-          ) : (
-            <>
-              <button
-                onClick={handleConfirmBooking}
-                disabled={confirming}
-                className="w-full h-14 flex items-center justify-center gap-2 bg-primary hover:bg-green-hover text-primary-foreground font-bold rounded-xl transition-colors disabled:opacity-50 text-base font-body"
-              >
-                {confirming ? 'Confirming\u2026' : (
-                  <>
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                      <polyline points="20 6 9 17 4 12" />
-                    </svg>
-                    Confirm Booking
-                  </>
-                )}
-              </button>
-              <p className="text-xs font-body text-muted-foreground text-center">
-                Done booking? Confirm to let your crew know.
-              </p>
-            </>
-          )}
-        </div>
-      )}
-
-      {/* ── Tee Time Card (specific time) ── */}
-      {round.has_specific_time && round.specific_tee_time && round.status !== 'cancelled' && (
-        <div className="bg-primary/5 border border-primary/25 rounded-2xl p-5 space-y-4">
-          <div className="flex items-center gap-2">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-primary">
-              <path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z" />
-              <line x1="4" y1="22" x2="4" y2="15" />
-            </svg>
-            <span className="text-sm font-body font-semibold text-primary">
-              {round.status === 'booked' ? 'Booked' : round.status === 'found' ? 'Time Found' : 'Tee Time'}
-            </span>
-          </div>
-
-          <div>
-            <p className="font-display text-lg leading-tight">
-              {formatDateShort(round.round_date)} &middot; {formatTime(round.specific_tee_time)}
-            </p>
-            <p className="text-sm font-body text-muted-foreground mt-1">
-              {specificCourse?.name ?? 'TBD'}
-            </p>
-          </div>
-
-          {round.status !== 'booked' && (
-            <>
-              {!bookingClicked ? (
-                <>
-                  <button
-                    onClick={() => bookingUrl && handleBook(bookingUrl)}
-                    disabled={!bookingUrl}
-                    className="w-full h-14 flex items-center justify-center gap-2 bg-primary hover:bg-green-hover text-primary-foreground font-bold rounded-xl transition-colors disabled:opacity-30 disabled:cursor-not-allowed text-base font-body"
-                  >
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
-                      <polyline points="15 3 21 3 21 9" />
-                      <line x1="10" y1="14" x2="21" y2="3" />
-                    </svg>
-                    Book This Time
-                  </button>
-                  <p className="text-xs font-body text-muted-foreground text-center">
-                    You'll complete the booking on {specificCourse?.name ?? 'the course'}'s site
-                  </p>
-                </>
-              ) : (
-                <>
-                  <button
-                    onClick={handleConfirmBooking}
-                    disabled={confirming}
-                    className="w-full h-14 flex items-center justify-center gap-2 bg-primary hover:bg-green-hover text-primary-foreground font-bold rounded-xl transition-colors disabled:opacity-50 text-base font-body"
-                  >
-                    {confirming ? 'Confirming\u2026' : (
-                      <>
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                          <polyline points="20 6 9 17 4 12" />
-                        </svg>
-                        Confirm Booking
-                      </>
-                    )}
-                  </button>
-                  <p className="text-xs font-body text-muted-foreground text-center">
-                    Done booking? Confirm to let your crew know.
-                  </p>
-                </>
-              )}
-            </>
-          )}
-        </div>
-      )}
-
-      {/* ── Watching Card ── */}
-      {!round.has_specific_time && round.status === 'watching' && (
-        <div className="bg-card border border-border rounded-2xl p-5 space-y-3">
-          <div className="flex items-center gap-2">
-            <span className="relative flex h-2 w-2">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-75" />
-              <span className="relative inline-flex rounded-full h-2 w-2 bg-primary" />
-            </span>
-            <span className="text-sm font-body font-semibold text-primary">
-              Watching for times...
-            </span>
-          </div>
+          <p className="font-display text-lg leading-tight">
+            {formatTime(round.specific_tee_time)} at {bookedCourse?.name ?? 'TBD'}
+          </p>
           <p className="text-sm font-body text-muted-foreground">
-            {formatTime(round.time_window_start)} – {formatTime(round.time_window_end)} &middot;{' '}
-            {courseNames.join(', ')}
+            {formatDateShort(round.round_date)}
           </p>
         </div>
+      )}
+
+      {/* ── Available Now / Watching ── */}
+      {(round.status === 'watching' || round.status === 'open' || round.status === 'found') && (
+        <>
+          {loadingTimes ? (
+            <div className="space-y-2">
+              <div className="skeleton" style={{ height: 16, width: 120 }} />
+              <div className="skeleton w-full" style={{ height: 64 }} />
+              <div className="skeleton w-full" style={{ height: 64 }} />
+            </div>
+          ) : availableTimes.length > 0 ? (
+            <section className="space-y-3">
+              <h2 className="text-xs font-body font-semibold uppercase tracking-widest text-muted-foreground">
+                Available Now
+              </h2>
+
+              {courseGroups.map(([courseName, times]) => (
+                <div key={courseName} className="space-y-2">
+                  {multiCourse && (
+                    <p className="text-xs font-body font-medium text-muted-foreground uppercase tracking-wide">
+                      {courseName}
+                    </p>
+                  )}
+                  {times.map(tt => {
+                    const isBooking = bookingTimeId === tt.id
+                    return (
+                      <div
+                        key={tt.id}
+                        className={`bg-card border rounded-2xl p-4 space-y-3 transition-all duration-150 ${
+                          isBooking ? 'border-primary/40 bg-primary/5' : 'border-border'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <span className="font-display text-[17px] text-foreground">
+                              {formatTime(tt.tee_time)}
+                            </span>
+                            {!multiCourse && (
+                              <span className="text-sm font-body text-muted-foreground ml-3">
+                                {tt.courses?.name}
+                              </span>
+                            )}
+                          </div>
+                          {tt.price_label && (
+                            <span className="text-sm font-body text-muted-foreground">{tt.price_label}</span>
+                          )}
+                        </div>
+
+                        {!isBooking ? (
+                          <button
+                            onClick={() => handleBook(tt)}
+                            className="w-full h-11 flex items-center justify-center gap-2 bg-primary hover:bg-green-hover text-primary-foreground font-bold rounded-xl transition-colors text-sm font-body"
+                          >
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                              <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+                              <polyline points="15 3 21 3 21 9" />
+                              <line x1="10" y1="14" x2="21" y2="3" />
+                            </svg>
+                            Book This Time
+                          </button>
+                        ) : (
+                          <div className="space-y-2">
+                            <button
+                              onClick={handleConfirmBooking}
+                              disabled={confirming}
+                              className="w-full h-11 flex items-center justify-center gap-2 bg-primary hover:bg-green-hover text-primary-foreground font-bold rounded-xl transition-colors disabled:opacity-50 text-sm font-body"
+                            >
+                              {confirming ? 'Confirming\u2026' : (
+                                <>
+                                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                                    <polyline points="20 6 9 17 4 12" />
+                                  </svg>
+                                  Confirm Booking
+                                </>
+                              )}
+                            </button>
+                            <p className="text-xs font-body text-muted-foreground text-center">
+                              Done booking on {tt.courses?.name ?? 'the course'}'s site? Confirm to let your crew know.
+                            </p>
+                            <button
+                              onClick={() => setBookingTimeId(null)}
+                              className="w-full text-xs font-body text-muted-foreground/60 hover:text-foreground transition-colors"
+                            >
+                              Not this one
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+              ))}
+
+              <p className="text-xs font-body text-muted-foreground text-center">
+                Or skip these and wait for something better
+              </p>
+            </section>
+          ) : (
+            <div className="bg-card border border-border rounded-2xl p-5 space-y-3">
+              <div className="flex items-center gap-2">
+                <span className="relative flex h-2 w-2">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-75" />
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-primary" />
+                </span>
+                <span className="text-sm font-body font-semibold text-primary">
+                  Watching for times...
+                </span>
+              </div>
+              <p className="text-sm font-body text-muted-foreground">
+                {formatTime(round.time_window_start)} – {formatTime(round.time_window_end)} &middot;{' '}
+                {courseNames.join(', ')}
+              </p>
+            </div>
+          )}
+        </>
       )}
 
       {/* ── Share Link ── */}
@@ -476,7 +523,7 @@ export default function RoundDetail() {
       </section>
 
       {/* ── Cancel ── */}
-      {round.status !== 'cancelled' && (
+      {round.status !== 'cancelled' && round.status !== 'booked' && (
         <button
           onClick={handleCancel}
           disabled={cancelling}
