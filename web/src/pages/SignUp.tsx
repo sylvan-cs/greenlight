@@ -30,11 +30,17 @@ export default function SignUp() {
 
     // Save notification preferences to profile
     if (userId) {
-      await supabase.from('profiles').update({
+      const { error: prefErr } = await supabase.from('profiles').update({
         phone: phone.trim() || null,
         sms_opt_in: smsOptIn && !!phone.trim(),
         email_opt_in: emailOptIn,
       }).eq('id', userId)
+      // If opt-in columns don't exist yet, save phone only
+      if (prefErr) {
+        await supabase.from('profiles').update({
+          phone: phone.trim() || null,
+        }).eq('id', userId)
+      }
     }
 
     setLoading(false)

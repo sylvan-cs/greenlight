@@ -27,7 +27,17 @@ export default function Profile() {
       .select('phone, sms_opt_in, email_opt_in')
       .eq('id', user.id)
       .single()
-      .then(({ data }) => {
+      .then(({ data, error }) => {
+        if (error) {
+          // Columns may not exist yet — fall back to phone-only query
+          supabase
+            .from('profiles')
+            .select('phone')
+            .eq('id', user.id)
+            .single()
+            .then(({ data: d }) => { if (d?.phone) setPhone(d.phone) })
+          return
+        }
         if (data?.phone) setPhone(data.phone)
         if (data?.sms_opt_in != null) setSmsOptIn(data.sms_opt_in)
         if (data?.email_opt_in != null) setEmailOptIn(data.email_opt_in)
@@ -76,10 +86,14 @@ export default function Profile() {
     setSaving(true)
     setPhoneSaved(false)
     try {
-      await supabase
+      const { error: updateErr } = await supabase
         .from('profiles')
         .update({ phone, sms_opt_in: smsOptIn, email_opt_in: emailOptIn })
         .eq('id', user.id)
+      // If columns don't exist yet, save phone only
+      if (updateErr) {
+        await supabase.from('profiles').update({ phone }).eq('id', user.id)
+      }
       setPhoneSaved(true)
       setTimeout(() => setPhoneSaved(false), 3000)
     } catch (e) {
