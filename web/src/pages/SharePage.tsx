@@ -150,6 +150,9 @@ export default function SharePage() {
       <p className="text-xl font-body font-semibold text-muted-foreground mb-1">
         {creatorName} wants to play
       </p>
+      <p className="text-sm font-body text-muted-foreground mb-1">
+        Let them know if you're in — they'll share the tee time once it's booked.
+      </p>
       <h1 className="font-display text-primary text-[34px] leading-tight mb-1">
         {formatDateLong(round.round_date)}
       </h1>
@@ -276,6 +279,12 @@ export default function SharePage() {
             {rsvpStatus === 'in'
               ? `${creatorName} will share the tee time once it's booked.`
               : `${creatorName} will see your response.`}
+          </p>
+          <p className="text-xs font-body text-muted-foreground/60 pt-2">
+            Want to organize your own round?{' '}
+            <a href="/signup" className="text-primary/70 hover:text-primary transition-colors">
+              Create a free account &rarr;
+            </a>
           </p>
         </div>
       ) : isFull ? (
