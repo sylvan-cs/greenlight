@@ -16,12 +16,17 @@ export default async function handler(request: Request) {
     })
   }
 
-  const supabaseUrl = process.env.SUPABASE_URL
+  const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL
   const supabaseKey = process.env.SUPABASE_SERVICE_KEY
   const resendKey = process.env.RESEND_API_KEY
 
   if (!supabaseUrl || !supabaseKey || !resendKey) {
-    return new Response(JSON.stringify({ error: 'Missing server configuration' }), {
+    const missing = [
+      !supabaseUrl && 'SUPABASE_URL',
+      !supabaseKey && 'SUPABASE_SERVICE_KEY',
+      !resendKey && 'RESEND_API_KEY',
+    ].filter(Boolean)
+    return new Response(JSON.stringify({ error: 'Missing server configuration', missing }), {
       status: 500,
       headers: { 'Content-Type': 'application/json' },
     })
