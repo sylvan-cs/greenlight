@@ -11,7 +11,7 @@ export default function Welcome() {
           </h1>
           <div className="w-8 h-[3px] bg-primary rounded-full" />
           <p className="text-sm font-body text-muted-foreground mt-1 text-center">
-            Stop texting. Start playing.
+            Group tee times, minus the group text.
           </p>
         </div>
 
