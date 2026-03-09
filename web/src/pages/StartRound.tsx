@@ -339,35 +339,37 @@ export default function StartRound() {
         </div>
 
         {useCustomTime && (
-          <div className="flex gap-3">
-            <div className="flex-1 flex flex-col gap-1.5">
-              <span className="text-xs font-body text-muted-foreground">From</span>
-              <select
-                value={customStart}
-                onChange={e => setCustomStart(e.target.value)}
-                className="h-11 rounded-xl border border-border bg-card text-foreground font-body text-sm px-3 focus:outline-none focus:border-primary transition-colors appearance-none"
-              >
-                {TIME_OPTIONS.map(opt => (
-                  <option key={opt.value} value={opt.value}>{opt.label}</option>
-                ))}
-              </select>
+          <>
+            <div className="flex gap-3">
+              <div className="flex-1 flex flex-col gap-1.5">
+                <span className="text-xs font-body text-muted-foreground">From</span>
+                <select
+                  value={customStart}
+                  onChange={e => setCustomStart(e.target.value)}
+                  className="h-11 rounded-xl border border-border bg-card text-foreground font-body text-sm px-3 focus:outline-none focus:border-primary transition-colors appearance-none"
+                >
+                  {TIME_OPTIONS.map(opt => (
+                    <option key={opt.value} value={opt.value}>{opt.label}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="flex-1 flex flex-col gap-1.5">
+                <span className="text-xs font-body text-muted-foreground">To</span>
+                <select
+                  value={customEnd}
+                  onChange={e => setCustomEnd(e.target.value)}
+                  className="h-11 rounded-xl border border-border bg-card text-foreground font-body text-sm px-3 focus:outline-none focus:border-primary transition-colors appearance-none"
+                >
+                  {TIME_OPTIONS.map(opt => (
+                    <option key={opt.value} value={opt.value}>{opt.label}</option>
+                  ))}
+                </select>
+              </div>
             </div>
-            <div className="flex-1 flex flex-col gap-1.5">
-              <span className="text-xs font-body text-muted-foreground">To</span>
-              <select
-                value={customEnd}
-                onChange={e => setCustomEnd(e.target.value)}
-                className="h-11 rounded-xl border border-border bg-card text-foreground font-body text-sm px-3 focus:outline-none focus:border-primary transition-colors appearance-none"
-              >
-                {TIME_OPTIONS.map(opt => (
-                  <option key={opt.value} value={opt.value}>{opt.label}</option>
-                ))}
-              </select>
-            </div>
-          </div>
-          {timeError && (
-            <p className="text-xs font-body text-destructive">End time must be after start time</p>
-          )}
+            {timeError && (
+              <p className="text-xs font-body text-destructive">End time must be after start time</p>
+            )}
+          </>
         )}
       </section>
 
