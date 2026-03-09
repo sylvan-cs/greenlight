@@ -1688,7 +1688,7 @@ def _notify(all_results, config):
     notify_cfg = config.get("notify", {})
     api_key = os.environ.get("RESEND_API_KEY") or notify_cfg.get("resend_api_key", "")
     to_email = os.environ.get("NOTIFY_EMAIL") or notify_cfg.get("email", "")
-    from_email = notify_cfg.get("from_email", "GreenLight <onboarding@resend.dev>")
+    from_email = notify_cfg.get("from_email", "The Starter <hello@thestarter.golf>")
 
     if not api_key or api_key.startswith("re_YOUR"):
         return
@@ -1717,9 +1717,9 @@ def _notify(all_results, config):
         return
 
     # Build email body
-    subject = f"GreenLight: {len(alerts)} tee time alert(s)"
+    subject = f"The Starter: {len(alerts)} tee time alert(s)"
     lines = [
-        f"GreenLight found available tee times at {len(alerts)} course/date combination(s):\n",
+        f"The Starter found available tee times at {len(alerts)} course/date combination(s):\n",
     ]
     for a in alerts:
         lines.append(f"## {a['course']} - {a['location']}")
@@ -1752,7 +1752,7 @@ def _notify(all_results, config):
             headers={
                 "Authorization": f"Bearer {api_key}",
                 "Content-Type": "application/json",
-                "User-Agent": "GreenLight/1.0",
+                "User-Agent": "TheStarter/1.0",
             },
         )
         with urllib.request.urlopen(req, timeout=10) as resp:
@@ -1801,10 +1801,9 @@ def _send_sms(twilio_sid, twilio_token, twilio_phone, to_phone, message):
 
 def _send_match_email(to_email, course_name, time_display, date_display,
                       price_display, spots_display, booking_url, round_id,
-                      from_email="GreenLight <onboarding@resend.dev>"):
+                      from_email="The Starter <teetimes@thestarter.golf>"):
     """Send match notification email via Resend."""
     api_key = os.environ.get("RESEND_API_KEY", "")
-    # Free-tier onboarding@resend.dev can only deliver to the Resend account email
     to_email = os.environ.get("NOTIFY_EMAIL") or to_email
     if not api_key or api_key.startswith("re_YOUR"):
         print("    Email: no Resend API key configured")
@@ -1824,7 +1823,7 @@ def _send_match_email(to_email, course_name, time_display, date_display,
         f"{time_display} at {course_name}\n"
         f"{details}\n\n"
         f"Book now: {booking_url}\n"
-        f"View round: https://the-starter.vercel.app/round/{round_id}\n"
+        f"View round: https://thestarter.golf/round/{round_id}\n"
     )
 
     try:
@@ -1841,7 +1840,7 @@ def _send_match_email(to_email, course_name, time_display, date_display,
             headers={
                 "Authorization": f"Bearer {api_key}",
                 "Content-Type": "application/json",
-                "User-Agent": "GreenLight/1.0",
+                "User-Agent": "TheStarter/1.0",
             },
         )
         with urllib.request.urlopen(req, timeout=10) as resp:
@@ -1855,16 +1854,15 @@ def _send_match_email(to_email, course_name, time_display, date_display,
 
 def _send_rsvp_email(to_email, creator_name, time_display, course_name,
                      date_display, share_code, price_display="",
-                     from_email="GreenLight <onboarding@resend.dev>"):
+                     from_email="The Starter <teetimes@thestarter.golf>"):
     """Send RSVP notification email via Resend."""
     api_key = os.environ.get("RESEND_API_KEY", "")
-    # Free-tier onboarding@resend.dev can only deliver to the Resend account email
     to_email = os.environ.get("NOTIFY_EMAIL") or to_email
     if not api_key or api_key.startswith("re_YOUR"):
         return False
 
     subject = f"\U0001f3cc\ufe0f {creator_name} found a tee time!"
-    share_link = f"https://the-starter.vercel.app/r/{share_code}"
+    share_link = f"https://thestarter.golf/r/{share_code}"
 
     details = date_display
     if price_display:
@@ -1891,7 +1889,7 @@ def _send_rsvp_email(to_email, creator_name, time_display, course_name,
             headers={
                 "Authorization": f"Bearer {api_key}",
                 "Content-Type": "application/json",
-                "User-Agent": "GreenLight/1.0",
+                "User-Agent": "TheStarter/1.0",
             },
         )
         with urllib.request.urlopen(req, timeout=10) as resp:
@@ -1914,7 +1912,7 @@ def _check_round_matches():
     # Load from_email from config (same source as the working alert email)
     config = _load_config()
     notify_cfg = config.get("notify", {}) if config else {}
-    from_email = notify_cfg.get("from_email", "GreenLight <onboarding@resend.dev>")
+    from_email = notify_cfg.get("from_email", "The Starter <hello@thestarter.golf>")
 
     if not supabase_url or not supabase_key:
         print("\nMatching: skipping (Supabase not configured)")
@@ -2053,7 +2051,7 @@ def _check_round_matches():
                     f"{time_display} at {course_name}\n"
                     f"{sms_details}\n"
                     f"Book now: {booking_url}\n"
-                    f"Round: https://the-starter.vercel.app/round/{round_id}"
+                    f"Round: https://thestarter.golf/round/{round_id}"
                 )
                 if _send_sms(twilio_sid, twilio_token, twilio_phone, creator["phone"], message):
                     sms_sent += 1
@@ -2111,7 +2109,7 @@ def _check_round_matches():
                         rsvp_message = (
                             f"\U0001f3cc\ufe0f {creator_name} found a tee time! "
                             f"{time_display} at {course_name} on {date_display}. "
-                            f"Check it out: https://the-starter.vercel.app/r/{round_data['share_code']}"
+                            f"Check it out: https://thestarter.golf/r/{round_data['share_code']}"
                         )
                         if _send_sms(twilio_sid, twilio_token, twilio_phone, rsvp_profile["phone"], rsvp_message):
                             sms_sent += 1

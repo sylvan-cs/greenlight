@@ -93,7 +93,7 @@ export default async function handler(request: Request) {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          from: 'The Starter <onboarding@resend.dev>',
+          from: 'The Starter <teetimes@thestarter.golf>',
           to: [to],
           subject,
           text: body,
