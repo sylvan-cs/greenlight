@@ -187,7 +187,7 @@ export default function RoundDetail() {
       .eq('id', round.id)
 
     if (!error) {
-      setRound(prev => prev ? { ...prev, status: 'cancelled' } : prev)
+      navigate('/home')
     }
     setCancelling(false)
   }
@@ -555,7 +555,7 @@ export default function RoundDetail() {
       </section>
 
       {/* ── Cancel ── */}
-      {round.status !== 'cancelled' && round.status !== 'booked' && (
+      {round.status !== 'cancelled' && (
         <>
           <button
             onClick={() => setShowCancelConfirm(true)}
