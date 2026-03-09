@@ -16,6 +16,8 @@ export default function SharePage() {
   const [submitting, setSubmitting] = useState(false)
   const [rsvpDone, setRsvpDone] = useState(false)
   const [rsvpStatus, setRsvpStatus] = useState<'in' | 'maybe' | 'out'>('in')
+  const [rsvpId, setRsvpId] = useState<string | null>(null)
+  const [changingResponse, setChangingResponse] = useState(false)
   const [error, setError] = useState('')
 
   useEffect(() => {
@@ -47,6 +49,28 @@ export default function SharePage() {
 
     fetchRound()
   }, [shareCode])
+
+  // Restore previous RSVP from localStorage
+  useEffect(() => {
+    if (!round?.id || !shareCode) return
+    const stored = localStorage.getItem(`rsvp_${shareCode}`)
+    if (!stored) return
+    try {
+      const { id: storedId, name: storedName, status } = JSON.parse(stored)
+      // Verify the RSVP still exists in the round
+      const match = round.rsvps?.find(r => r.id === storedId)
+      if (match) {
+        setRsvpId(storedId)
+        setName(storedName)
+        setRsvpStatus(status)
+        setRsvpDone(true)
+      } else {
+        localStorage.removeItem(`rsvp_${shareCode}`)
+      }
+    } catch {
+      localStorage.removeItem(`rsvp_${shareCode}`)
+    }
+  }, [round?.id, shareCode]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!round?.id) return
@@ -84,7 +108,36 @@ export default function SharePage() {
     setError('')
     setRsvpStatus(status)
 
-    const { error: rsvpError } = await supabase
+    if (rsvpId && changingResponse) {
+      // Update existing RSVP
+      const { error: updateError } = await supabase
+        .from('rsvps')
+        .update({ status })
+        .eq('id', rsvpId)
+
+      if (updateError) {
+        setError(updateError.message)
+        setSubmitting(false)
+        return
+      }
+
+      // Update local round state
+      setRound(prev => {
+        if (!prev) return prev
+        return {
+          ...prev,
+          rsvps: prev.rsvps.map(r => r.id === rsvpId ? { ...r, status } : r),
+        }
+      })
+
+      localStorage.setItem(`rsvp_${shareCode}`, JSON.stringify({ id: rsvpId, name: name.trim(), status }))
+      setChangingResponse(false)
+      setRsvpDone(true)
+      setSubmitting(false)
+      return
+    }
+
+    const { data: rsvpData, error: rsvpError } = await supabase
       .from('rsvps')
       .insert({
         round_id: round.id,
@@ -92,11 +145,18 @@ export default function SharePage() {
         email: email.trim() || null,
         status,
       })
+      .select('id')
+      .single()
 
     if (rsvpError) {
       setError(rsvpError.message)
       setSubmitting(false)
       return
+    }
+
+    if (rsvpData) {
+      setRsvpId(rsvpData.id)
+      localStorage.setItem(`rsvp_${shareCode}`, JSON.stringify({ id: rsvpData.id, name: name.trim(), status }))
     }
 
     setRsvpDone(true)
@@ -182,7 +242,7 @@ export default function SharePage() {
               {round.round_courses?.find(rc => rc.course_id === round.specific_course_id)?.courses?.name ?? 'TBD'}
             </p>
           </div>
-          {round.status === 'open' && (
+          {round.status === 'watching' && (
             <p className="text-xs font-body text-muted-foreground italic">
               {creatorName} is booking this time
             </p>
@@ -282,6 +342,15 @@ export default function SharePage() {
               ? `${creatorName} will share the tee time once it's booked.`
               : `${creatorName} will see your response.`}
           </p>
+          <button
+            onClick={() => {
+              setChangingResponse(true)
+              setRsvpDone(false)
+            }}
+            className="text-xs font-body text-muted-foreground/60 hover:text-foreground transition-colors pt-1"
+          >
+            Change response
+          </button>
           <p className="text-xs font-body text-muted-foreground/60 pt-2">
             Want to organize your own round?{' '}
             <a href="/signup" className="text-primary/70 hover:text-primary transition-colors">
@@ -295,36 +364,42 @@ export default function SharePage() {
         </div>
       ) : (
         <div className="bg-card border border-border rounded-2xl p-5 space-y-4">
-          <p className="font-display text-lg">Join this round</p>
+          <p className="font-display text-lg">
+            {changingResponse ? 'Change your response' : 'Join this round'}
+          </p>
 
-          <div className="space-y-2">
-            <h3 className="text-xs font-body font-semibold uppercase tracking-widest text-muted-foreground">
-              Your Name
-            </h3>
-            <input
-              type="text"
-              value={name}
-              onChange={e => setName(e.target.value)}
-              placeholder="Enter your name"
-              className="w-full h-12 px-4 bg-background border border-border rounded-xl text-foreground font-body placeholder-muted-foreground focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary transition-colors"
-            />
-          </div>
+          {!changingResponse && (
+            <>
+              <div className="space-y-2">
+                <h3 className="text-xs font-body font-semibold uppercase tracking-widest text-muted-foreground">
+                  Your Name
+                </h3>
+                <input
+                  type="text"
+                  value={name}
+                  onChange={e => setName(e.target.value)}
+                  placeholder="Enter your name"
+                  className="w-full h-12 px-4 bg-background border border-border rounded-xl text-foreground font-body placeholder-muted-foreground focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary transition-colors"
+                />
+              </div>
 
-          <div className="space-y-2">
-            <h3 className="text-xs font-body font-semibold uppercase tracking-widest text-muted-foreground">
-              Email <span className="normal-case tracking-normal font-normal text-muted-foreground/50">(optional)</span>
-            </h3>
-            <input
-              type="email"
-              value={email}
-              onChange={e => setEmail(e.target.value)}
-              placeholder="you@example.com"
-              className="w-full h-12 px-4 bg-background border border-border rounded-xl text-foreground font-body placeholder-muted-foreground focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary transition-colors"
-            />
-            <p className="text-xs font-body text-muted-foreground/60">
-              We'll notify you when the tee time is confirmed
-            </p>
-          </div>
+              <div className="space-y-2">
+                <h3 className="text-xs font-body font-semibold uppercase tracking-widest text-muted-foreground">
+                  Email <span className="normal-case tracking-normal font-normal text-muted-foreground/50">(optional)</span>
+                </h3>
+                <input
+                  type="email"
+                  value={email}
+                  onChange={e => setEmail(e.target.value)}
+                  placeholder="you@example.com"
+                  className="w-full h-12 px-4 bg-background border border-border rounded-xl text-foreground font-body placeholder-muted-foreground focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary transition-colors"
+                />
+                <p className="text-xs font-body text-muted-foreground/60">
+                  We'll notify you when the tee time is confirmed
+                </p>
+              </div>
+            </>
+          )}
 
           {error && <p className="text-sm font-body text-destructive">{error}</p>}
 

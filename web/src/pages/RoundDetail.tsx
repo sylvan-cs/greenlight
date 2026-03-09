@@ -50,10 +50,29 @@ export default function RoundDetail() {
   const [loading, setLoading] = useState(true)
   const [copied, setCopied] = useState(false)
   const [cancelling, setCancelling] = useState(false)
+  const [showCancelConfirm, setShowCancelConfirm] = useState(false)
   const [bookingTimeId, setBookingTimeId] = useState<string | null>(null)
   const [confirming, setConfirming] = useState(false)
   const [availableTimes, setAvailableTimes] = useState<TeeTime[]>([])
   const [loadingTimes, setLoadingTimes] = useState(true)
+
+  // Restore booking-in-progress state from localStorage on mount/return
+  useEffect(() => {
+    if (!id) return
+    const stored = localStorage.getItem(`booking_${id}`)
+    if (!stored) return
+    try {
+      const { teeTimeId, startedAt } = JSON.parse(stored)
+      // Expire after 24 hours
+      if (Date.now() - startedAt > 24 * 60 * 60 * 1000) {
+        localStorage.removeItem(`booking_${id}`)
+        return
+      }
+      setBookingTimeId(teeTimeId)
+    } catch {
+      localStorage.removeItem(`booking_${id}`)
+    }
+  }, [id])
 
   // Fetch available tee times matching this round's criteria
   const fetchAvailableTimes = useCallback(async (roundData: RoundWithDetails) => {
@@ -177,6 +196,8 @@ export default function RoundDetail() {
     const url = teeTime.courses?.booking_url
     if (url) window.open(url, '_blank', 'noopener')
     setBookingTimeId(teeTime.id)
+    // Store booking-in-progress flag for return detection
+    localStorage.setItem(`booking_${id}`, JSON.stringify({ teeTimeId: teeTime.id, startedAt: Date.now() }))
   }
 
   const handleConfirmBooking = async () => {
@@ -201,6 +222,7 @@ export default function RoundDetail() {
       .eq('id', round.id)
 
     if (!error) {
+      localStorage.removeItem(`booking_${id}`)
       setRound(prev => prev ? {
         ...prev,
         status: 'booked',
@@ -398,7 +420,10 @@ export default function RoundDetail() {
                               Done booking on {tt.courses?.name ?? 'the course'}'s site? Confirm to let your crew know.
                             </p>
                             <button
-                              onClick={() => setBookingTimeId(null)}
+                              onClick={() => {
+                                setBookingTimeId(null)
+                                localStorage.removeItem(`booking_${id}`)
+                              }}
                               className="w-full text-xs font-body text-muted-foreground/60 hover:text-foreground transition-colors"
                             >
                               Not this one
@@ -531,13 +556,40 @@ export default function RoundDetail() {
 
       {/* ── Cancel ── */}
       {round.status !== 'cancelled' && round.status !== 'booked' && (
-        <button
-          onClick={handleCancel}
-          disabled={cancelling}
-          className="w-full text-center text-sm font-body text-muted-foreground/60 hover:text-destructive transition-colors py-2 disabled:opacity-50"
-        >
-          {cancelling ? 'Cancelling\u2026' : 'Cancel Round'}
-        </button>
+        <>
+          <button
+            onClick={() => setShowCancelConfirm(true)}
+            className="w-full text-center text-sm font-body text-muted-foreground/60 hover:text-destructive transition-colors py-2"
+          >
+            Cancel Round
+          </button>
+
+          {showCancelConfirm && (
+            <div className="bg-card border border-destructive/30 rounded-2xl p-5 space-y-3">
+              <p className="text-sm font-body text-foreground font-medium">
+                Are you sure you want to cancel this round?
+              </p>
+              <p className="text-xs font-body text-muted-foreground">
+                This can't be undone. Your group will see the round as cancelled.
+              </p>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setShowCancelConfirm(false)}
+                  className="flex-1 h-11 border border-border text-foreground font-body font-semibold rounded-xl hover:bg-muted/50 transition-colors text-sm"
+                >
+                  Keep Round
+                </button>
+                <button
+                  onClick={handleCancel}
+                  disabled={cancelling}
+                  className="flex-1 h-11 bg-destructive hover:bg-destructive/90 text-destructive-foreground font-body font-bold rounded-xl transition-colors disabled:opacity-50 text-sm"
+                >
+                  {cancelling ? 'Cancelling\u2026' : 'Yes, Cancel'}
+                </button>
+              </div>
+            </div>
+          )}
+        </>
       )}
     </div>
   )

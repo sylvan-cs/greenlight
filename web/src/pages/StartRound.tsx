@@ -162,8 +162,13 @@ export default function StartRound() {
     setUseCustomTime(false)
   }
 
+  const timeError = useCustomTime && customEnd <= customStart
+    ? 'End time must be after start time'
+    : ''
+
   const handleCreate = async () => {
     if (!user) return
+    if (timeError) return
     setSubmitting(true)
     setError('')
 
@@ -229,7 +234,7 @@ export default function StartRound() {
     navigate(`/round/${round.id}`)
   }
 
-  const canProceed = selectedCourseIds.size > 0 && (useCustomTime || selectedDayParts.size > 0)
+  const canProceed = selectedCourseIds.size > 0 && (useCustomTime || selectedDayParts.size > 0) && !timeError
 
   const confirmDate = new Date(selectedDate + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
   const confirmTime = useCustomTime
@@ -270,26 +275,29 @@ export default function StartRound() {
         <h3 className="text-xs font-body font-semibold uppercase tracking-widest text-muted-foreground">
           Date
         </h3>
-        <div className="flex gap-2 overflow-x-auto -mx-5 px-5 pb-1 no-scrollbar">
-          {dateChips.map(chip => {
-            const isSelected = selectedDate === chip.date
-            return (
-              <button
-                key={chip.date}
-                onClick={() => setSelectedDate(chip.date)}
-                className={`shrink-0 flex flex-col items-center w-14 py-2 rounded-xl text-center transition-all duration-150 active:scale-95 select-none ${
-                  isSelected
-                    ? 'bg-primary text-primary-foreground'
-                    : 'bg-muted/50 text-muted-foreground hover:bg-muted'
-                }`}
-              >
-                <span className="text-[10px] font-body font-semibold uppercase tracking-wider">
-                  {chip.dayLabel}
-                </span>
-                <span className="text-lg font-display leading-tight mt-0.5">{chip.dateNum}</span>
-              </button>
-            )
-          })}
+        <div className="relative -mx-5">
+          <div className="flex gap-2 overflow-x-auto px-5 pb-1 no-scrollbar">
+            {dateChips.map(chip => {
+              const isSelected = selectedDate === chip.date
+              return (
+                <button
+                  key={chip.date}
+                  onClick={() => setSelectedDate(chip.date)}
+                  className={`shrink-0 flex flex-col items-center w-14 py-2 rounded-xl text-center transition-all duration-150 active:scale-95 select-none ${
+                    isSelected
+                      ? 'bg-primary text-primary-foreground'
+                      : 'bg-muted/50 text-muted-foreground hover:bg-muted'
+                  }`}
+                >
+                  <span className="text-[10px] font-body font-semibold uppercase tracking-wider">
+                    {chip.dayLabel}
+                  </span>
+                  <span className="text-lg font-display leading-tight mt-0.5">{chip.dateNum}</span>
+                </button>
+              )
+            })}
+          </div>
+          <div className="pointer-events-none absolute inset-y-0 right-0 w-10 bg-gradient-to-l from-background to-transparent" />
         </div>
       </section>
 
@@ -357,6 +365,9 @@ export default function StartRound() {
               </select>
             </div>
           </div>
+          {timeError && (
+            <p className="text-xs font-body text-destructive">End time must be after start time</p>
+          )}
         )}
       </section>
 

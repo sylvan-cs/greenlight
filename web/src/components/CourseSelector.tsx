@@ -21,6 +21,7 @@ export default function CourseSelector({
   const [njCourses, setNjCourses] = useState<Course[]>([])
   const [loadingCourses, setLoadingCourses] = useState(true)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set(initialSelectedIds))
+  const [loadError, setLoadError] = useState(false)
   const [requestName, setRequestName] = useState('')
   const [requestStatus, setRequestStatus] = useState<'idle' | 'sending' | 'sent'>('idle')
 
@@ -48,7 +49,7 @@ export default function CourseSelector({
       .order('name')
 
     Promise.all([activeFetch, njFetch]).then(([activeRes, njRes]) => {
-      if (activeRes.error) console.error('Failed to load courses:', activeRes.error)
+      if (activeRes.error) setLoadError(true)
       if (activeRes.data) setCourses(activeRes.data.map((row: any) => { const { tee_times, ...course } = row; return course; }) as Course[])
       if (njRes.data) setNjCourses(njRes.data as Course[])
       setLoadingCourses(false)
@@ -94,6 +95,9 @@ export default function CourseSelector({
 
   return (
     <div className="flex flex-col gap-6">
+      {loadError && (
+        <p className="text-sm font-body text-destructive">Couldn't load courses. Check your connection and try again.</p>
+      )}
       {Array.from(coursesByRegion.entries()).map(([region, regionCourses]) => (
         <section key={region} className="space-y-2.5">
           <h3 className="text-xs font-body font-semibold uppercase tracking-widest text-muted-foreground">

@@ -5,13 +5,30 @@ import { supabase } from '../lib/supabase'
 import CourseSelector from '../components/CourseSelector'
 import type { Course } from '../lib/types'
 
+function formatPhoneNumber(value: string): string {
+  const digits = value.replace(/\D/g, '')
+  // Remove leading 1 for US numbers
+  const d = digits.startsWith('1') && digits.length > 10 ? digits.slice(1) : digits
+  if (d.length <= 3) return d
+  if (d.length <= 6) return `(${d.slice(0, 3)}) ${d.slice(3)}`
+  return `(${d.slice(0, 3)}) ${d.slice(3, 6)}-${d.slice(6, 10)}`
+}
+
+function isValidPhone(value: string): boolean {
+  const digits = value.replace(/\D/g, '')
+  return digits.length === 10 || (digits.length === 11 && digits.startsWith('1'))
+}
+
 export default function Profile() {
   const { user, signOut } = useAuth()
   const [phone, setPhone] = useState('')
   const [smsOptIn, setSmsOptIn] = useState(false)
   const [emailOptIn, setEmailOptIn] = useState(true)
   const [phoneSaved, setPhoneSaved] = useState(false)
+  const [saveError, setSaveError] = useState('')
   const [saving, setSaving] = useState(false)
+  const [profileLoading, setProfileLoading] = useState(true)
+  const [coursesLoading, setCoursesLoading] = useState(true)
   const [userCourses, setUserCourses] = useState<Course[]>([])
   const [editingCourses, setEditingCourses] = useState(false)
   const [savingCourses, setSavingCourses] = useState(false)
@@ -29,18 +46,21 @@ export default function Profile() {
       .single()
       .then(({ data, error }) => {
         if (error) {
-          // Columns may not exist yet — fall back to phone-only query
           supabase
             .from('profiles')
             .select('phone')
             .eq('id', user.id)
             .single()
-            .then(({ data: d }) => { if (d?.phone) setPhone(d.phone) })
+            .then(({ data: d }) => {
+              if (d?.phone) setPhone(d.phone)
+              setProfileLoading(false)
+            })
           return
         }
         if (data?.phone) setPhone(data.phone)
         if (data?.sms_opt_in != null) setSmsOptIn(data.sms_opt_in)
         if (data?.email_opt_in != null) setEmailOptIn(data.email_opt_in)
+        setProfileLoading(false)
       })
   }, [user])
 
@@ -54,6 +74,7 @@ export default function Profile() {
         if (data) {
           setUserCourses(data.map((uc: any) => uc.courses).filter(Boolean))
         }
+        setCoursesLoading(false)
       })
   }, [user])
 
@@ -96,8 +117,9 @@ export default function Profile() {
       }
       setPhoneSaved(true)
       setTimeout(() => setPhoneSaved(false), 3000)
-    } catch (e) {
-      console.error('Failed to save phone:', e)
+    } catch {
+      setSaveError('Failed to save. Please try again.')
+      setTimeout(() => setSaveError(''), 3000)
     } finally {
       setSaving(false)
     }
@@ -126,52 +148,69 @@ export default function Profile() {
           Notifications
         </h2>
 
-        <div className="flex flex-col gap-1.5">
-          <label className="flex items-center gap-2.5 cursor-pointer select-none">
-            <input
-              type="checkbox"
-              checked={smsOptIn}
-              onChange={e => setSmsOptIn(e.target.checked)}
-              className="w-4 h-4 rounded border-border accent-primary"
-            />
-            <span className="text-sm font-body text-foreground">
-              Text me when a tee time opens up
-            </span>
-          </label>
-          <div className="flex gap-3 ml-[26px]">
-            <input
-              type="tel"
-              value={phone}
-              onChange={e => setPhone(e.target.value)}
-              placeholder="+1 (555) 123-4567"
-              className="flex-1 h-12 px-4 bg-card border border-border rounded-xl text-foreground font-body placeholder-muted-foreground focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary transition-colors"
-            />
+        {profileLoading ? (
+          <div className="space-y-3">
+            <div className="skeleton h-5 w-64 rounded" />
+            <div className="skeleton h-12 w-full rounded-xl" />
+            <div className="skeleton h-5 w-56 rounded" />
           </div>
-        </div>
+        ) : (
+          <>
+            <div className="flex flex-col gap-1.5">
+              <label className="flex items-center gap-2.5 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={smsOptIn}
+                  onChange={e => setSmsOptIn(e.target.checked)}
+                  className="w-4 h-4 rounded border-border accent-primary"
+                />
+                <span className="text-sm font-body text-foreground">
+                  Text me when a tee time opens up
+                </span>
+              </label>
+              <div className="flex gap-3 ml-[26px]">
+                <input
+                  type="tel"
+                  value={phone}
+                  onChange={e => setPhone(formatPhoneNumber(e.target.value))}
+                  placeholder="(555) 123-4567"
+                  className="flex-1 h-12 px-4 bg-card border border-border rounded-xl text-foreground font-body placeholder-muted-foreground focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary transition-colors"
+                />
+              </div>
+              {phone && !isValidPhone(phone) && (
+                <p className="text-xs font-body text-destructive ml-[26px]">Enter a valid 10-digit phone number</p>
+              )}
+            </div>
 
-        <label className="flex items-center gap-2.5 cursor-pointer select-none">
-          <input
-            type="checkbox"
-            checked={emailOptIn}
-            onChange={e => setEmailOptIn(e.target.checked)}
-            className="w-4 h-4 rounded border-border accent-primary"
-          />
-          <span className="text-sm font-body text-foreground">
-            Email me when a tee time opens up
-          </span>
-        </label>
+            <label className="flex items-center gap-2.5 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={emailOptIn}
+                onChange={e => setEmailOptIn(e.target.checked)}
+                className="w-4 h-4 rounded border-border accent-primary"
+              />
+              <span className="text-sm font-body text-foreground">
+                Email me when a tee time opens up
+              </span>
+            </label>
 
-        <p className="text-xs font-body text-muted-foreground/60 ml-[26px]">
-          Reply STOP to any text to opt out
-        </p>
+            <p className="text-xs font-body text-muted-foreground/60 ml-[26px]">
+              Reply STOP to any text to opt out
+            </p>
 
-        <button
-          onClick={savePhone}
-          disabled={saving}
-          className="h-12 px-5 bg-primary hover:bg-green-hover text-primary-foreground font-bold rounded-xl transition-colors disabled:opacity-50 text-sm font-body"
-        >
-          {saving ? 'Saving\u2026' : phoneSaved ? 'Saved!' : 'Save'}
-        </button>
+            {saveError && (
+              <p className="text-sm font-body text-destructive">{saveError}</p>
+            )}
+
+            <button
+              onClick={savePhone}
+              disabled={saving || (smsOptIn && phone !== '' && !isValidPhone(phone))}
+              className="h-12 px-5 bg-primary hover:bg-green-hover text-primary-foreground font-bold rounded-xl transition-colors disabled:opacity-50 text-sm font-body"
+            >
+              {saving ? 'Saving\u2026' : phoneSaved ? 'Saved!' : 'Save'}
+            </button>
+          </>
+        )}
       </section>
 
       <hr className="border-border/40" />
@@ -192,7 +231,13 @@ export default function Profile() {
           )}
         </div>
 
-        {editingCourses ? (
+        {coursesLoading ? (
+          <div className="flex flex-wrap gap-2">
+            {[1, 2, 3].map(i => (
+              <div key={i} className="skeleton h-9 w-28 rounded-full" />
+            ))}
+          </div>
+        ) : editingCourses ? (
           <CourseSelector
             key="profile-course-editor"
             initialSelectedIds={new Set(userCourses.map(c => c.id))}

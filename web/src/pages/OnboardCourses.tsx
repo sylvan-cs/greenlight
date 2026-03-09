@@ -8,6 +8,7 @@ export default function OnboardCourses() {
   const { user, setNeedsOnboarding } = useAuth()
   const navigate = useNavigate()
   const [isSaving, setIsSaving] = useState(false)
+  const [saveError, setSaveError] = useState('')
   const [existingIds, setExistingIds] = useState<Set<string> | null>(null)
 
   // Load any previously saved courses so the UI stays in sync
@@ -40,7 +41,7 @@ export default function OnboardCourses() {
       setNeedsOnboarding(false)
       navigate('/home')
     } else {
-      console.error('Failed to save courses:', error)
+      setSaveError('Something went wrong saving your courses. Please try again.')
     }
     setIsSaving(false)
   }
@@ -70,6 +71,10 @@ export default function OnboardCourses() {
             Pick the courses you play. You can always change these later.
           </p>
         </div>
+
+        {saveError && (
+          <p className="text-sm font-body text-destructive">{saveError}</p>
+        )}
 
         <CourseSelector
           initialSelectedIds={existingIds}
