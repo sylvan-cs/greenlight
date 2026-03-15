@@ -12,3 +12,11 @@ UPDATE courses SET lat = 38.6168, lng = -122.8719 WHERE slug = 'healdsburg' OR n
 UPDATE courses SET lat = 37.4089, lng = -122.0631 WHERE slug = 'moffett-field' OR name = 'Moffett Field Golf Club';
 UPDATE courses SET lat = 37.4272, lng = -122.0819 WHERE slug = 'shoreline' OR name = 'Shoreline Golf Links';
 UPDATE courses SET lat = 38.5474, lng = -122.8180 WHERE slug = 'windsor' OR name = 'Windsor Golf Club';
+
+-- Fix booking URLs for Essex County TeeItUp courses
+UPDATE courses SET booking_url = 'https://essex-county-golf.book.teeitup.golf'
+WHERE slug IN ('francis-byrne', 'hendricks-field', 'weequahic');
+
+-- Fix Galloping Hill booking URL
+UPDATE courses SET booking_url = 'https://www.gallopinghillgolfcourse.com/request-tt/'
+WHERE slug = 'galloping-hill';

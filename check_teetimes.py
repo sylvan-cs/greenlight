@@ -88,30 +88,30 @@ COURSES = [
         "facility_id": 3250,
         "slug": "3250-cranbury-golf-club",
     },
-    # Chronogolf courses
+    # TeeItUp / Kenna courses (Essex County)
     {
         "name": "Francis A. Byrne Golf Course",
         "key": "francis_byrne",
         "location": "West Orange, NJ",
-        "system": "chronogolf",
-        "slug": "francis-byrne-golf-course",
-        "course_uuid": None,  # auto-discovered
+        "system": "teeitup",
+        "be_alias": "essex-county-golf",
+        "facility_id": 5962,
     },
     {
         "name": "Hendricks Field Golf Course",
         "key": "hendricks_field",
         "location": "Belleville, NJ",
-        "system": "chronogolf",
-        "slug": "hendricks-field-golf-course",
-        "course_uuid": None,
+        "system": "teeitup",
+        "be_alias": "essex-county-golf",
+        "facility_id": 5965,
     },
     {
         "name": "Weequahic Park Golf Course",
         "key": "weequahic_park",
         "location": "Newark, NJ",
-        "system": "chronogolf",
-        "slug": "weequahic-park-golf-course",
-        "course_uuid": None,
+        "system": "teeitup",
+        "be_alias": "essex-county-golf",
+        "facility_id": 5966,
     },
     {
         "name": "Skyway Golf Course",
@@ -320,6 +320,10 @@ def run(scan_all=False):
             all_results.update(check_clubcaddie(context, by_system["clubcaddie"]))
 
         browser.close()
+
+    # TeeItUp uses direct API calls (no browser needed)
+    if "teeitup" in by_system:
+        all_results.update(check_teeitup(by_system["teeitup"]))
 
     # Save per-course JSON files and combined findings
     for key, result in all_results.items():
@@ -1381,6 +1385,125 @@ def _parse_tee_time_text(text):
     return tt
 
 
+# =========================================================================
+# TeeItUp / Kenna
+# =========================================================================
+
+TEEITUP_API = "https://phx-api-be-east-1b.kenna.io/v2/tee-times"
+
+
+def check_teeitup(courses):
+    """Check all TeeItUp/Kenna courses via direct API. Returns {key: result} dict."""
+    print("\n" + "=" * 70)
+    print(f"TEEITUP / KENNA ({len(courses)} courses)")
+    print("=" * 70)
+
+    import urllib.request
+
+    results = {}
+
+    for course in courses:
+        print(f"\n--- {course['name']} ({course['location']}) ---")
+
+        result = {
+            "course": course["name"],
+            "location": course["location"],
+            "system": "TeeItUp / Kenna",
+            "checked_at": datetime.now().isoformat(),
+            "dates_checked": {},
+        }
+
+        for label, date in DATES_TO_CHECK:
+            print(f"  [{label}] {date} ...", end=" ")
+            date_result = {
+                "date": date,
+                "tee_times": [],
+                "tee_time_count": 0,
+                "status": "pending",
+            }
+
+            try:
+                url = (
+                    f"{TEEITUP_API}"
+                    f"?date={date}"
+                    f"&facilityIds={course['facility_id']}"
+                )
+                req = urllib.request.Request(url, headers={
+                    "x-be-alias": course["be_alias"],
+                    "Accept": "application/json",
+                    "User-Agent": "TheStarter/1.0",
+                })
+                with urllib.request.urlopen(req, timeout=15) as resp:
+                    data = json.loads(resp.read())
+
+                tee_times = []
+                for course_block in data:
+                    for tt in course_block.get("teetimes", []):
+                        # Parse ISO time: "2026-03-29T14:00:00.000Z"
+                        raw_time = tt.get("teetime", "")
+                        try:
+                            dt = datetime.fromisoformat(raw_time.replace("Z", "+00:00"))
+                            # Convert UTC to Eastern (UTC-4 or UTC-5)
+                            # Use a simple offset; courses are in NJ (Eastern)
+                            from datetime import timezone as tz
+                            eastern_offset = timedelta(hours=-4)  # EDT
+                            dt_local = dt.astimezone(tz(eastern_offset))
+                            time_24 = dt_local.strftime("%H:%M")
+                        except Exception:
+                            time_24 = raw_time
+
+                        max_players = tt.get("maxPlayers", 4)
+                        booked = tt.get("bookedPlayers", 0)
+                        available = max_players - booked
+
+                        if available <= 0:
+                            continue
+
+                        # Get best rate (first rate with pricing)
+                        price = None
+                        price_label = None
+                        holes = 18
+                        for rate in tt.get("rates", []):
+                            fee = rate.get("greenFeeWalking") or rate.get("greenFeeCart")
+                            if fee:
+                                price = fee  # already in cents
+                                price_label = f"${fee / 100:.2f}"
+                                holes = rate.get("holes", 18)
+                                break
+
+                        tee_times.append({
+                            "time": time_24,
+                            "players_available": available,
+                            "price": price_label,
+                            "green_fee": price_label,
+                            "holes": holes,
+                            "source": "api",
+                            "raw_teetime": raw_time,
+                        })
+
+                date_result["tee_times"] = tee_times
+                date_result["tee_time_count"] = len(tee_times)
+                date_result["available_count"] = len(tee_times)
+                date_result["status"] = "ok" if tee_times else "no_availability"
+                date_result["url"] = (
+                    f"https://{course['be_alias']}.book.teeitup.golf/"
+                    f"?course={course['facility_id']}&date={date}"
+                )
+
+                print(f"{len(tee_times)} times")
+
+            except Exception as e:
+                date_result["status"] = "error"
+                date_result["error"] = str(e)
+                print(f"ERROR: {e}")
+
+            result["dates_checked"][label] = date_result
+
+        results[course["key"]] = result
+
+    return results
+
+
 def _save(data, filename):
     path = os.path.join(RESULTS_DIR, filename)
     with open(path, "w") as f:
@@ -1534,6 +1657,8 @@ def _build_booking_link(course, date):
     elif system == "clubcaddie":
         p = date.split("-")  # YYYY-MM-DD
         return f"https://apimanager-cc11.clubcaddie.com/webapi/view/{course['apikey']}/slots?date={p[1]}%2F{p[2]}%2F{p[0]}"
+    elif system == "teeitup":
+        return f"https://{course['be_alias']}.book.teeitup.golf/?course={course['facility_id']}&date={date}"
     return None
 
 
