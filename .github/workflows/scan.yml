@@ -1,12 +1,9 @@
 name: Tee Time Scanner
 
 on:
-  schedule:
-    # Every 15 minutes, 6 AM - 10 PM Pacific (UTC-8 → 14:00-06:00 UTC)
-    # GitHub Actions cron is UTC. Runs every 15 min during waking hours.
-    - cron: "*/15 14-23 * * *"  # 6 AM - 3:59 PM Pacific
-    - cron: "*/15 0-6 * * *"    # 4 PM - 10:59 PM Pacific
-  workflow_dispatch: # Allow manual trigger from GitHub UI
+  # Schedule disabled — scanner now runs on Railway (*/10 cron).
+  # Keep workflow_dispatch for manual runs / debugging.
+  workflow_dispatch: # Manual trigger from GitHub UI
 
 jobs:
   scan:

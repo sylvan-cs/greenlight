@@ -1,0 +1,6 @@
+[build]
+dockerfile = "Dockerfile"
+
+[deploy]
+cronSchedule = "*/10 * * * *"
+startCommand = "python check_teetimes.py"

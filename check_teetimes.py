@@ -34,6 +34,14 @@ RESULTS_DIR = os.path.join(SCRIPT_DIR, "results")
 CONFIG_PATH = os.path.join(SCRIPT_DIR, "scan_config.json")
 os.makedirs(RESULTS_DIR, exist_ok=True)
 
+# Identify runner environment
+if os.environ.get("RAILWAY_ENVIRONMENT"):
+    _RUNNER = "Railway"
+elif os.environ.get("GITHUB_ACTIONS"):
+    _RUNNER = "GitHub Actions"
+else:
+    _RUNNER = "local"
+
 TODAY = datetime.now().strftime("%Y-%m-%d")
 
 # Scan the next 14 days by default (covers all near-term booking windows)
@@ -282,6 +290,7 @@ def run(scan_all=False):
         active_courses = _filter_courses(COURSES, config)
         print("GreenLight - Tee Time Availability Checker")
 
+    print(f"Starting scan on {_RUNNER}")
     print(f"Run: {datetime.now().isoformat()}")
     _build_dates_to_check()
     print(f"Courses: {len(active_courses)} of {len(COURSES)} enabled\n")
