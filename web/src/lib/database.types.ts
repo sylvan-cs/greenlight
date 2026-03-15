@@ -8,6 +8,8 @@ export type Database = {
           city: string
           region: string
           booking_url: string | null
+          lat: number | null
+          lng: number | null
         }
         Insert: {
           id?: string
@@ -15,6 +17,8 @@ export type Database = {
           city: string
           region: string
           booking_url?: string | null
+          lat?: number | null
+          lng?: number | null
         }
         Update: {
           id?: string
@@ -22,6 +26,8 @@ export type Database = {
           city?: string
           region?: string
           booking_url?: string | null
+          lat?: number | null
+          lng?: number | null
         }
         Relationships: []
       }
@@ -31,18 +37,24 @@ export type Database = {
           phone: string | null
           sms_opt_in: boolean
           email_opt_in: boolean
+          flexibility_minutes: number
+          course_radius_miles: number
         }
         Insert: {
           id: string
           phone?: string | null
           sms_opt_in?: boolean
           email_opt_in?: boolean
+          flexibility_minutes?: number
+          course_radius_miles?: number
         }
         Update: {
           id?: string
           phone?: string | null
           sms_opt_in?: boolean
           email_opt_in?: boolean
+          flexibility_minutes?: number
+          course_radius_miles?: number
         }
         Relationships: []
       }
