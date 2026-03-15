@@ -17,6 +17,7 @@ Usage:
 
 import argparse
 import json
+import math
 import os
 import re
 import sys
@@ -1782,6 +1783,25 @@ def _format_date_friendly(date_str):
         return date_str
 
 
+def _format_date_long(date_str):
+    """Convert 'YYYY-MM-DD' to 'Sunday, March 22' format."""
+    try:
+        dt = datetime.strptime(date_str, "%Y-%m-%d")
+        day = dt.strftime("%d").lstrip("0")
+        return dt.strftime(f"%A, %B {day}")
+    except Exception:
+        return date_str
+
+
+def _haversine_miles(lat1, lng1, lat2, lng2):
+    """Calculate distance in miles between two lat/lng points."""
+    R = 3958.8  # Earth radius in miles
+    dlat = math.radians(lat2 - lat1)
+    dlng = math.radians(lng2 - lng1)
+    a = math.sin(dlat/2)**2 + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlng/2)**2
+    return R * 2 * math.asin(math.sqrt(a))
+
+
 def _send_sms(twilio_sid, twilio_token, twilio_phone, to_phone, message):
     """Send an SMS via Twilio. Returns True on success."""
     try:
@@ -1799,32 +1819,38 @@ def _send_sms(twilio_sid, twilio_token, twilio_phone, to_phone, message):
         return False
 
 
-def _send_match_email(to_email, course_name, time_display, date_display,
-                      price_display, spots_display, booking_url, round_id,
+def _send_match_email(to_email, suggestions, round_id,
                       from_email="The Starter <teetimes@thestarter.golf>"):
-    """Send match notification email via Resend."""
+    """Send match notification email with up to 3 ranked suggestions via Resend."""
     api_key = os.environ.get("RESEND_API_KEY", "")
     to_email = os.environ.get("NOTIFY_EMAIL") or to_email
     if not api_key or api_key.startswith("re_YOUR"):
         print("    Email: no Resend API key configured")
         return False
 
-    subject = f"\U0001f3cc\ufe0f Tee time found! {time_display} at {course_name}"
+    best = suggestions[0]
+    subject = f"\u26f3 Tee time found! {best['time_display']} at {best['course_name']}"
 
-    # Build detail line: "Wed, Feb 25 · $30.00 · 4 spots"
-    details = date_display
-    if price_display:
-        details += f" \u00b7 {price_display}"
-    if spots_display:
-        details += f" \u00b7 {spots_display} spots"
+    lines = ["\u26f3 Tee time found for your round!\n"]
+    for i, s in enumerate(suggestions):
+        if i > 0:
+            lines.append("---\n")
+        lines.append(f"{s['course_name']}")
+        lines.append(f"{s['date_long']} at {s['time_display']}")
+        detail_parts = []
+        if s.get('price_display'):
+            detail_parts.append(s['price_display'])
+        if s.get('spots_display'):
+            detail_parts.append(f"{s['spots_display']} spots available")
+        if detail_parts:
+            lines.append(" \u00b7 ".join(detail_parts))
+        lines.append(f"Match: {s['match_label']}")
+        lines.append(f"\nBook This Time: {s['booking_url']}")
+        lines.append(f"\u2192 Select {s['date_short']} \u00b7 {s['players']} players \u00b7 {s['time_display']}\n")
 
-    text = (
-        f"\U0001f3cc\ufe0f Tee time found for your round!\n\n"
-        f"{time_display} at {course_name}\n"
-        f"{details}\n\n"
-        f"Book now: {booking_url}\n"
-        f"View round: https://thestarter.golf/round/{round_id}\n"
-    )
+    lines.append("---")
+    lines.append("Reply STOP to unsubscribe from tee time alerts")
+    text = "\n".join(lines)
 
     try:
         import urllib.request
@@ -1852,8 +1878,8 @@ def _send_match_email(to_email, course_name, time_display, date_display,
         return False
 
 
-def _send_rsvp_email(to_email, creator_name, time_display, course_name,
-                     date_display, share_code, price_display="",
+def _send_rsvp_email(to_email, creator_name, suggestions,
+                     share_code,
                      from_email="The Starter <teetimes@thestarter.golf>"):
     """Send RSVP notification email via Resend."""
     api_key = os.environ.get("RESEND_API_KEY", "")
@@ -1861,19 +1887,29 @@ def _send_rsvp_email(to_email, creator_name, time_display, course_name,
     if not api_key or api_key.startswith("re_YOUR"):
         return False
 
-    subject = f"\U0001f3cc\ufe0f {creator_name} found a tee time!"
+    best = suggestions[0]
+    subject = f"\u26f3 {creator_name} found a tee time!"
     share_link = f"https://thestarter.golf/r/{share_code}"
 
-    details = date_display
-    if price_display:
-        details += f" \u00b7 {price_display}"
+    lines = [f"\u26f3 {creator_name} found a tee time!\n"]
+    for i, s in enumerate(suggestions):
+        if i > 0:
+            lines.append("---\n")
+        lines.append(f"{s['course_name']}")
+        lines.append(f"{s['date_long']} at {s['time_display']}")
+        detail_parts = []
+        if s.get('price_display'):
+            detail_parts.append(s['price_display'])
+        if detail_parts:
+            lines.append(" \u00b7 ".join(detail_parts))
+        lines.append(f"Match: {s['match_label']}")
+        lines.append(f"\nBook This Time: {s['booking_url']}")
+        lines.append(f"\u2192 Select {s['date_short']} \u00b7 {s['players']} players \u00b7 {s['time_display']}\n")
 
-    text = (
-        f"\U0001f3cc\ufe0f {creator_name} found a tee time!\n\n"
-        f"{time_display} at {course_name}\n"
-        f"{details}\n\n"
-        f"View round: {share_link}\n"
-    )
+    lines.append(f"View round: {share_link}")
+    lines.append("\n---")
+    lines.append("Reply STOP to unsubscribe from tee time alerts")
+    text = "\n".join(lines)
 
     try:
         import urllib.request
@@ -1909,7 +1945,6 @@ def _check_round_matches():
     twilio_token = os.environ.get("TWILIO_AUTH_TOKEN", "")
     twilio_phone = os.environ.get("TWILIO_PHONE_NUMBER", "")
 
-    # Load from_email from config (same source as the working alert email)
     config = _load_config()
     notify_cfg = config.get("notify", {}) if config else {}
     from_email = notify_cfg.get("from_email", "The Starter <hello@thestarter.golf>")
@@ -1941,11 +1976,19 @@ def _check_round_matches():
         if not open_rounds:
             return
 
+        # Fetch all courses with coordinates for radius matching
+        all_courses_resp = sb.table("courses").select("id, name, lat, lng, booking_url").execute()
+        all_courses = {c["id"]: c for c in (all_courses_resp.data or [])}
+
         sms_sent = 0
         MAX_SMS_PER_CYCLE = 5
 
         for round_data in open_rounds:
             round_id = round_data["id"]
+            spots_needed = round_data.get("spots_needed", 1)
+            time_start = round_data["time_window_start"]
+            time_end = round_data["time_window_end"]
+            round_date = round_data["round_date"]
 
             # Get round's courses
             rc_resp = (
@@ -1958,32 +2001,155 @@ def _check_round_matches():
             if not course_ids:
                 continue
 
-            # Query matching tee times
+            # Get creator profile for preferences
+            creator_resp = (
+                sb.table("profiles")
+                .select("full_name, phone, sms_opt_in, email_opt_in, flexibility_minutes, course_radius_miles")
+                .eq("id", round_data["creator_id"])
+                .single()
+                .execute()
+            )
+            creator = creator_resp.data
+            flexibility_minutes = (creator.get("flexibility_minutes") if creator else None) or 60
+            course_radius_miles = (creator.get("course_radius_miles") if creator else None) or 25
+
+            # --- 1. Exact matches (preferred courses, exact time window) ---
+            suggestions = []
+
             tt_resp = (
                 sb.table("tee_times")
                 .select("*")
                 .in_("course_id", course_ids)
-                .eq("tee_date", round_data["round_date"])
-                .gte("tee_time", round_data["time_window_start"])
-                .lte("tee_time", round_data["time_window_end"])
+                .eq("tee_date", round_date)
+                .gte("tee_time", time_start)
+                .lte("tee_time", time_end)
                 .eq("is_available", True)
                 .order("tee_time")
                 .limit(20)
                 .execute()
             )
-
-            # Filter by spots_needed (spots_available can be null = unlimited)
-            spots_needed = round_data.get("spots_needed", 1)
-            match = None
             for tt in (tt_resp.data or []):
                 if tt.get("spots_available") is None or tt["spots_available"] >= spots_needed:
-                    match = tt
-                    break
+                    course_info = all_courses.get(tt["course_id"], {})
+                    suggestions.append({
+                        "tee_time": tt,
+                        "course_name": course_info.get("name", "Unknown Course"),
+                        "match_type": "exact",
+                        "match_label": "Your time",
+                        "booking_url": tt.get("booking_link") or course_info.get("booking_url", ""),
+                    })
 
-            if not match:
+            # --- 2. Flex matches (preferred courses, outside time window) ---
+            if flexibility_minutes and flexibility_minutes > 0:
+                # Calculate expanded window
+                try:
+                    start_dt = datetime.strptime(time_start, "%H:%M")
+                    end_dt = datetime.strptime(time_end, "%H:%M")
+                    flex_start = (start_dt - timedelta(minutes=flexibility_minutes)).strftime("%H:%M")
+                    flex_end = (end_dt + timedelta(minutes=flexibility_minutes)).strftime("%H:%M")
+                except Exception:
+                    flex_start = time_start
+                    flex_end = time_end
+
+                # Query times in the flex window but NOT in the exact window
+                flex_resp = (
+                    sb.table("tee_times")
+                    .select("*")
+                    .in_("course_id", course_ids)
+                    .eq("tee_date", round_date)
+                    .gte("tee_time", flex_start)
+                    .lte("tee_time", flex_end)
+                    .eq("is_available", True)
+                    .order("tee_time")
+                    .limit(20)
+                    .execute()
+                )
+                for tt in (flex_resp.data or []):
+                    # Skip if already in exact window
+                    if time_start <= tt["tee_time"] <= time_end:
+                        continue
+                    if tt.get("spots_available") is None or tt["spots_available"] >= spots_needed:
+                        # Calculate how far outside the window
+                        try:
+                            tt_dt = datetime.strptime(tt["tee_time"], "%H:%M")
+                            if tt_dt < start_dt:
+                                diff = int((start_dt - tt_dt).total_seconds() / 60)
+                            else:
+                                diff = int((tt_dt - end_dt).total_seconds() / 60)
+                        except Exception:
+                            diff = flexibility_minutes
+                        course_info = all_courses.get(tt["course_id"], {})
+                        suggestions.append({
+                            "tee_time": tt,
+                            "course_name": course_info.get("name", "Unknown Course"),
+                            "match_type": "flex",
+                            "match_label": f"Close match \u2014 {diff} min outside your window",
+                            "booking_url": tt.get("booking_link") or course_info.get("booking_url", ""),
+                        })
+
+            # --- 3. Radius matches (nearby courses not in selected set) ---
+            if course_radius_miles and course_radius_miles > 0:
+                # Get lat/lng of selected courses
+                selected_coords = []
+                for cid in course_ids:
+                    c = all_courses.get(cid, {})
+                    if c.get("lat") and c.get("lng"):
+                        selected_coords.append((float(c["lat"]), float(c["lng"])))
+
+                if selected_coords:
+                    # Find nearby courses not in selected set
+                    nearby_ids = []
+                    nearby_distances = {}
+                    for cid, c in all_courses.items():
+                        if cid in course_ids:
+                            continue
+                        if not c.get("lat") or not c.get("lng"):
+                            continue
+                        clat, clng = float(c["lat"]), float(c["lng"])
+                        min_dist = min(
+                            _haversine_miles(slat, slng, clat, clng)
+                            for slat, slng in selected_coords
+                        )
+                        if min_dist <= course_radius_miles:
+                            nearby_ids.append(cid)
+                            nearby_distances[cid] = round(min_dist)
+
+                    if nearby_ids:
+                        nearby_resp = (
+                            sb.table("tee_times")
+                            .select("*")
+                            .in_("course_id", nearby_ids)
+                            .eq("tee_date", round_date)
+                            .gte("tee_time", time_start)
+                            .lte("tee_time", time_end)
+                            .eq("is_available", True)
+                            .order("tee_time")
+                            .limit(20)
+                            .execute()
+                        )
+                        for tt in (nearby_resp.data or []):
+                            if tt.get("spots_available") is None or tt["spots_available"] >= spots_needed:
+                                course_info = all_courses.get(tt["course_id"], {})
+                                dist = nearby_distances.get(tt["course_id"], "?")
+                                suggestions.append({
+                                    "tee_time": tt,
+                                    "course_name": course_info.get("name", "Unknown Course"),
+                                    "match_type": "radius",
+                                    "match_label": f"Nearby course \u2014 {dist} miles away",
+                                    "booking_url": tt.get("booking_link") or course_info.get("booking_url", ""),
+                                })
+
+            if not suggestions:
                 continue
 
-            print(f"  Round {round_id} matched with tee time {match['id']}")
+            # Cap at 3 suggestions (already ranked: exact first, flex second, radius third)
+            suggestions = suggestions[:3]
+
+            # Use the best match (first suggestion) for the round update
+            best = suggestions[0]
+            match = best["tee_time"]
+
+            print(f"  Round {round_id} matched with tee time {match['id']} ({best['match_type']})")
 
             # Update round status
             now_iso = datetime.now(timezone.utc).isoformat()
@@ -1993,34 +2159,28 @@ def _check_round_matches():
                 "matched_at": now_iso,
             }).eq("id", round_id).execute()
 
-            # Get creator profile
-            creator_resp = (
-                sb.table("profiles")
-                .select("full_name, phone, sms_opt_in, email_opt_in")
-                .eq("id", round_data["creator_id"])
-                .single()
-                .execute()
-            )
-            creator = creator_resp.data
+            # Build suggestion dicts for email
+            date_display = _format_date_friendly(round_date)
+            date_long = _format_date_long(round_date)
+            date_short = round_date  # YYYY-MM-DD for booking instruction
 
-            # Get course name
-            course_resp = (
-                sb.table("courses")
-                .select("name")
-                .eq("id", match["course_id"])
-                .single()
-                .execute()
-            )
-            course_name = course_resp.data["name"] if course_resp.data else "Unknown Course"
+            email_suggestions = []
+            for s in suggestions:
+                tt = s["tee_time"]
+                email_suggestions.append({
+                    "course_name": s["course_name"],
+                    "time_display": _format_time_ampm(tt["tee_time"]),
+                    "date_long": date_long,
+                    "date_short": date_display,
+                    "price_display": tt.get("price_label", ""),
+                    "spots_display": tt.get("spots_available"),
+                    "match_label": s["match_label"],
+                    "match_type": s["match_type"],
+                    "booking_url": s["booking_url"],
+                    "players": str(spots_needed),
+                })
 
-            # Format display values
-            time_display = _format_time_ampm(match["tee_time"])
-            date_display = _format_date_friendly(round_data["round_date"])
-            spots_display = match.get("spots_available")
-            booking_url = match.get("booking_link", "")
-            spots_text = f"{spots_display} spots available" if spots_display else "Spots available"
-
-            # Notify creator — email first, SMS fallback
+            # Notify creator — email + SMS
             creator_email = None
             try:
                 user_resp = sb.auth.admin.get_user_by_id(round_data["creator_id"])
@@ -2028,32 +2188,32 @@ def _check_round_matches():
             except Exception as e:
                 print(f"    Could not get creator email: {e}")
 
-            price_display = match.get("price_label", "")
-            creator_notified = False
-
+            creator_notified_email = False
             if creator_email and (not creator or creator.get("email_opt_in", True)):
-                creator_notified = _send_match_email(
-                    creator_email, course_name, time_display, date_display,
-                    price_display, spots_display, booking_url, round_id,
+                creator_notified_email = _send_match_email(
+                    creator_email, email_suggestions, round_id,
                     from_email=from_email,
                 )
 
-            # Build SMS detail line
-            sms_details = date_display
-            if price_display:
-                sms_details += f" \u00b7 {price_display}"
-            if spots_display:
-                sms_details += f" \u00b7 {spots_display} spots"
-
-            if not creator_notified and creator and creator.get("phone") and creator.get("sms_opt_in") and twilio_sid and twilio_token and twilio_phone:
-                message = (
-                    f"\U0001f3cc\ufe0f Tee time found!\n"
-                    f"{time_display} at {course_name}\n"
-                    f"{sms_details}\n"
-                    f"Book now: {booking_url}\n"
-                    f"Round: https://thestarter.golf/round/{round_id}"
-                )
-                if _send_sms(twilio_sid, twilio_token, twilio_phone, creator["phone"], message):
+            # SMS to creator (send alongside email, not just as fallback)
+            if creator and creator.get("phone") and creator.get("sms_opt_in") and twilio_sid and twilio_token and twilio_phone and sms_sent < MAX_SMS_PER_CYCLE:
+                best_s = email_suggestions[0]
+                if best_s["match_type"] == "exact":
+                    sms_msg = (
+                        f"\u26f3 {best_s['time_display']} at {best_s['course_name']} on {date_display}"
+                        f" \u2014 {best_s['spots_display'] or '?'} spots\n"
+                        f"Book: {best_s['booking_url']}\n"
+                        f"- The Starter"
+                    )
+                else:
+                    context_str = best_s['match_label']
+                    sms_msg = (
+                        f"\u26f3 {best_s['time_display']} at {best_s['course_name']}"
+                        f" ({context_str}) on {date_display}\n"
+                        f"Book: {best_s['booking_url']}\n"
+                        f"- The Starter"
+                    )
+                if _send_sms(twilio_sid, twilio_token, twilio_phone, creator["phone"], sms_msg):
                     sms_sent += 1
 
             # Notify RSVPs
@@ -2069,9 +2229,8 @@ def _check_round_matches():
 
             for rsvp in (rsvp_resp.data or []):
                 if not rsvp.get("user_id"):
-                    continue  # Guest RSVP, can't notify
+                    continue
 
-                # Get RSVP user's profile for notification preferences
                 rsvp_profile = None
                 try:
                     rsvp_profile_resp = (
@@ -2085,7 +2244,6 @@ def _check_round_matches():
                 except Exception:
                     pass
 
-                # Get RSVP user's email from auth.users
                 rsvp_email = None
                 try:
                     rsvp_user_resp = sb.auth.admin.get_user_by_id(rsvp["user_id"])
@@ -2093,25 +2251,33 @@ def _check_round_matches():
                 except Exception:
                     pass
 
-                rsvp_notified = False
+                # Send email
                 if rsvp_email and (not rsvp_profile or rsvp_profile.get("email_opt_in", True)):
-                    rsvp_notified = _send_rsvp_email(
-                        rsvp_email, creator_name, time_display, course_name,
-                        date_display, round_data["share_code"],
-                        price_display=price_display,
+                    _send_rsvp_email(
+                        rsvp_email, creator_name, email_suggestions,
+                        round_data["share_code"],
                         from_email=from_email,
                     )
 
-                if not rsvp_notified and twilio_sid and twilio_token and twilio_phone:
-                    if sms_sent >= MAX_SMS_PER_CYCLE:
-                        break
+                # Send SMS alongside email
+                if twilio_sid and twilio_token and twilio_phone and sms_sent < MAX_SMS_PER_CYCLE:
                     if rsvp_profile and rsvp_profile.get("phone") and rsvp_profile.get("sms_opt_in"):
-                        rsvp_message = (
-                            f"\U0001f3cc\ufe0f {creator_name} found a tee time! "
-                            f"{time_display} at {course_name} on {date_display}. "
-                            f"Check it out: https://thestarter.golf/r/{round_data['share_code']}"
-                        )
-                        if _send_sms(twilio_sid, twilio_token, twilio_phone, rsvp_profile["phone"], rsvp_message):
+                        best_s = email_suggestions[0]
+                        if best_s["match_type"] == "exact":
+                            rsvp_sms = (
+                                f"\u26f3 {best_s['time_display']} at {best_s['course_name']} on {date_display}"
+                                f" \u2014 {best_s['spots_display'] or '?'} spots\n"
+                                f"Book: {best_s['booking_url']}\n"
+                                f"- The Starter"
+                            )
+                        else:
+                            rsvp_sms = (
+                                f"\u26f3 {best_s['time_display']} at {best_s['course_name']}"
+                                f" ({best_s['match_label']}) on {date_display}\n"
+                                f"Book: {best_s['booking_url']}\n"
+                                f"- The Starter"
+                            )
+                        if _send_sms(twilio_sid, twilio_token, twilio_phone, rsvp_profile["phone"], rsvp_sms):
                             sms_sent += 1
 
         print(f"  Matching complete. {sms_sent} SMS sent this cycle.")

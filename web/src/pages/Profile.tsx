@@ -24,6 +24,8 @@ export default function Profile() {
   const [phone, setPhone] = useState('')
   const [smsOptIn, setSmsOptIn] = useState(false)
   const [emailOptIn, setEmailOptIn] = useState(true)
+  const [flexibilityMinutes, setFlexibilityMinutes] = useState(60)
+  const [courseRadiusMiles, setCourseRadiusMiles] = useState(25)
   const [phoneSaved, setPhoneSaved] = useState(false)
   const [saveError, setSaveError] = useState('')
   const [saving, setSaving] = useState(false)
@@ -41,7 +43,7 @@ export default function Profile() {
     if (!user) return
     supabase
       .from('profiles')
-      .select('phone, sms_opt_in, email_opt_in')
+      .select('phone, sms_opt_in, email_opt_in, flexibility_minutes, course_radius_miles')
       .eq('id', user.id)
       .single()
       .then(({ data, error }) => {
@@ -60,6 +62,8 @@ export default function Profile() {
         if (data?.phone) setPhone(data.phone)
         if (data?.sms_opt_in != null) setSmsOptIn(data.sms_opt_in)
         if (data?.email_opt_in != null) setEmailOptIn(data.email_opt_in)
+        if (data?.flexibility_minutes != null) setFlexibilityMinutes(data.flexibility_minutes)
+        if (data?.course_radius_miles != null) setCourseRadiusMiles(data.course_radius_miles)
         setProfileLoading(false)
       })
   }, [user])
@@ -109,7 +113,7 @@ export default function Profile() {
     try {
       const { error: updateErr } = await supabase
         .from('profiles')
-        .update({ phone, sms_opt_in: smsOptIn, email_opt_in: emailOptIn })
+        .update({ phone, sms_opt_in: smsOptIn, email_opt_in: emailOptIn, flexibility_minutes: flexibilityMinutes, course_radius_miles: courseRadiusMiles })
         .eq('id', user.id)
       // If columns don't exist yet, save phone only
       if (updateErr) {
@@ -211,6 +215,72 @@ export default function Profile() {
             </button>
           </>
         )}
+      </section>
+
+      <hr className="border-border/40" />
+
+      {/* Preferences */}
+      <section className="space-y-5">
+        <h2 className="text-xs font-body font-semibold uppercase tracking-widest text-muted-foreground">
+          Preferences
+        </h2>
+
+        {/* Time Flexibility */}
+        <div className="space-y-2">
+          <label className="text-sm font-body text-foreground">
+            How far outside my preferred window should we look?
+          </label>
+          <div className="flex gap-2">
+            {[
+              { label: '30 min', value: 30 },
+              { label: '1 hour', value: 60 },
+              { label: '2 hours', value: 120 },
+              { label: 'Any time', value: 0 },
+            ].map(opt => (
+              <button
+                key={opt.value}
+                onClick={() => setFlexibilityMinutes(opt.value)}
+                className={`flex-1 h-10 rounded-xl text-xs font-body font-medium border transition-colors ${
+                  flexibilityMinutes === opt.value
+                    ? 'bg-primary/15 text-primary border-primary/40'
+                    : 'bg-card border-border text-muted-foreground hover:border-primary/30'
+                }`}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Course Radius */}
+        <div className="space-y-2">
+          <label className="text-sm font-body text-foreground">
+            Suggest nearby courses I haven't selected?
+          </label>
+          <div className="flex gap-2">
+            {[
+              { label: 'Off', value: 0 },
+              { label: '10 mi', value: 10 },
+              { label: '25 mi', value: 25 },
+              { label: '50 mi', value: 50 },
+            ].map(opt => (
+              <button
+                key={opt.value}
+                onClick={() => setCourseRadiusMiles(opt.value)}
+                className={`flex-1 h-10 rounded-xl text-xs font-body font-medium border transition-colors ${
+                  courseRadiusMiles === opt.value
+                    ? 'bg-primary/15 text-primary border-primary/40'
+                    : 'bg-card border-border text-muted-foreground hover:border-primary/30'
+                }`}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+          <p className="text-xs font-body text-muted-foreground/60">
+            We'll suggest available times at courses near your selected ones
+          </p>
+        </div>
       </section>
 
       <hr className="border-border/40" />
