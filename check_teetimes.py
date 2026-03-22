@@ -1707,6 +1707,28 @@ def _sync_to_supabase(all_results, active_courses):
 
         print(f"\nSupabase: {len(slug_to_uuid)} courses in database")
 
+        # — Cleanup: mark past tee times as unavailable
+        past_resp = (
+            sb.table("tee_times")
+            .update({"is_available": False})
+            .lt("tee_date", TODAY)
+            .eq("is_available", True)
+            .execute()
+        )
+        past_count = len(past_resp.data) if past_resp.data else 0
+        print(f"  Supabase: marked {past_count} past tee times as unavailable")
+
+        # — Cleanup: delete tee times older than 30 days
+        cutoff_30d = (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d")
+        del_resp = (
+            sb.table("tee_times")
+            .delete()
+            .lt("tee_date", cutoff_30d)
+            .execute()
+        )
+        del_count = len(del_resp.data) if del_resp.data else 0
+        print(f"  Supabase: deleted {del_count} tee times older than 30 days")
+
         # b) Build rows to upsert
         now_iso = datetime.now(timezone.utc).isoformat()
         rows = []
