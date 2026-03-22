@@ -8,6 +8,7 @@ interface CourseSelectorProps {
   onSave: (selectedIds: Set<string>) => Promise<void>
   saveLabel?: string
   isSaving?: boolean
+  showAllActive?: boolean
 }
 
 export default function CourseSelector({
@@ -15,6 +16,7 @@ export default function CourseSelector({
   onSave,
   saveLabel = 'Continue',
   isSaving = false,
+  showAllActive = false,
 }: CourseSelectorProps) {
   const { user } = useAuth()
   const [courses, setCourses] = useState<Course[]>([])
@@ -25,26 +27,40 @@ export default function CourseSelector({
   const [requestStatus, setRequestStatus] = useState<'idle' | 'sending' | 'sent'>('idle')
 
   useEffect(() => {
-    const today = new Date()
-    const todayStr = today.toISOString().split('T')[0]
-    const future = new Date(today)
-    future.setDate(future.getDate() + 30)
-    const futureStr = future.toISOString().split('T')[0]
+    if (showAllActive) {
+      supabase
+        .from('courses')
+        .select('*')
+        .eq('scan_enabled', true)
+        .order('region')
+        .order('name')
+        .then(({ data, error }) => {
+          if (error) setLoadError(true)
+          if (data) setCourses(data as Course[])
+          setLoadingCourses(false)
+        })
+    } else {
+      const today = new Date()
+      const todayStr = today.toISOString().split('T')[0]
+      const future = new Date(today)
+      future.setDate(future.getDate() + 30)
+      const futureStr = future.toISOString().split('T')[0]
 
-    supabase
-      .from('courses')
-      .select('*, tee_times!inner(id)')
-      .eq('tee_times.is_available', true)
-      .gte('tee_times.tee_date', todayStr)
-      .lte('tee_times.tee_date', futureStr)
-      .order('region')
-      .order('name')
-      .then(({ data, error }) => {
-        if (error) setLoadError(true)
-        if (data) setCourses(data.map((row: any) => { const { tee_times, ...course } = row; return course; }) as Course[])
-        setLoadingCourses(false)
-      })
-  }, [])
+      supabase
+        .from('courses')
+        .select('*, tee_times!inner(id)')
+        .eq('tee_times.is_available', true)
+        .gte('tee_times.tee_date', todayStr)
+        .lte('tee_times.tee_date', futureStr)
+        .order('region')
+        .order('name')
+        .then(({ data, error }) => {
+          if (error) setLoadError(true)
+          if (data) setCourses(data.map((row: any) => { const { tee_times, ...course } = row; return course; }) as Course[])
+          setLoadingCourses(false)
+        })
+    }
+  }, [showAllActive])
 
   const coursesByRegion = useMemo(() => {
     const map = new Map<string, Course[]>()

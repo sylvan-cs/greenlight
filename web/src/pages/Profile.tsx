@@ -314,6 +314,7 @@ export default function Profile() {
             onSave={saveCoursesEdit}
             saveLabel="Save"
             isSaving={savingCourses}
+            showAllActive
           />
         ) : userCourses.length === 0 ? (
           <p className="text-sm font-body text-muted-foreground">
