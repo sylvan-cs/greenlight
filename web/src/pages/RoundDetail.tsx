@@ -1,9 +1,11 @@
 import { useEffect, useState, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
-import { formatDateShort, formatTime, getTimeWindowLabel } from '../lib/helpers'
+import { useAuth } from '../contexts/AuthContext'
+import { formatDateShort, formatTime, getTimeWindowLabel, generateDateChips } from '../lib/helpers'
+import { DAY_PARTS, DAY_PART_META, computeTimeRange, type DayPart } from '../lib/roundStore'
 import Avatar from '../components/Avatar'
-import type { RoundWithDetails, Rsvp, TeeTime } from '../lib/types'
+import type { RoundWithDetails, Rsvp, TeeTime, Course } from '../lib/types'
 
 function StatusBadge({ status }: { status: string }) {
   const config: Record<string, { text: string; className: string; pulse?: boolean }> = {
@@ -43,9 +45,41 @@ function StatusBadge({ status }: { status: string }) {
   )
 }
 
+// Generate time options from 6:00 AM to 6:00 PM in 30-min increments
+const TIME_OPTIONS: { value: string; label: string }[] = []
+for (let h = 6; h <= 18; h++) {
+  for (const m of [0, 30]) {
+    if (h === 18 && m === 30) break
+    const value = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`
+    TIME_OPTIONS.push({ value, label: formatTime(value) })
+  }
+}
+
+const dateChips = generateDateChips()
+
+/** Detect which day parts a time window maps to */
+function detectDayParts(start: string, end: string): { parts: Set<DayPart>; isCustom: boolean } {
+  for (const combo of [
+    ['morning'] as DayPart[],
+    ['midday'] as DayPart[],
+    ['afternoon'] as DayPart[],
+    ['morning', 'midday'] as DayPart[],
+    ['midday', 'afternoon'] as DayPart[],
+    ['morning', 'midday', 'afternoon'] as DayPart[],
+    ['morning', 'afternoon'] as DayPart[],
+  ]) {
+    const range = computeTimeRange(combo)
+    if (range.start === start && range.end === end) {
+      return { parts: new Set(combo), isCustom: false }
+    }
+  }
+  return { parts: new Set<DayPart>(), isCustom: true }
+}
+
 export default function RoundDetail() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
+  const { user } = useAuth()
   const [round, setRound] = useState<RoundWithDetails | null>(null)
   const [loading, setLoading] = useState(true)
   const [copied, setCopied] = useState(false)
@@ -55,6 +89,21 @@ export default function RoundDetail() {
   const [confirming, setConfirming] = useState(false)
   const [availableTimes, setAvailableTimes] = useState<TeeTime[]>([])
   const [loadingTimes, setLoadingTimes] = useState(true)
+
+  // Edit state
+  const [editing, setEditing] = useState(false)
+  const [editDate, setEditDate] = useState('')
+  const [editDayParts, setEditDayParts] = useState<Set<DayPart>>(new Set())
+  const [editUseCustomTime, setEditUseCustomTime] = useState(false)
+  const [editCustomStart, setEditCustomStart] = useState('08:00')
+  const [editCustomEnd, setEditCustomEnd] = useState('12:00')
+  const [editSpots, setEditSpots] = useState(4)
+  const [editCourseIds, setEditCourseIds] = useState<Set<string>>(new Set())
+  const [editAllCourses, setEditAllCourses] = useState(false)
+  const [userCourses, setUserCourses] = useState<Course[]>([])
+  const [loadingUserCourses, setLoadingUserCourses] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [editError, setEditError] = useState('')
 
   // Restore booking-in-progress state from localStorage on mount/return
   useEffect(() => {
@@ -243,6 +292,153 @@ export default function RoundDetail() {
     setBookingTimeId(null)
   }
 
+  // ── Edit handlers ──
+
+  const startEditing = async () => {
+    if (!round || !user) return
+
+    // Pre-populate form from current round values
+    setEditDate(round.round_date)
+    setEditSpots(round.spots_needed)
+
+    const detected = detectDayParts(round.time_window_start, round.time_window_end)
+    setEditDayParts(detected.parts)
+    setEditUseCustomTime(detected.isCustom)
+    setEditCustomStart(round.time_window_start)
+    setEditCustomEnd(round.time_window_end)
+
+    const currentCourseIds = new Set(round.round_courses?.map(rc => rc.course_id) ?? [])
+    setEditCourseIds(currentCourseIds)
+    setEditError('')
+
+    // Fetch user's courses for the selector
+    setLoadingUserCourses(true)
+    const { data } = await supabase
+      .from('user_courses')
+      .select('course_id, courses(*)')
+      .eq('user_id', user.id)
+
+    if (data) {
+      const myCourses = data
+        .map((uc: any) => uc.courses)
+        .filter(Boolean) as Course[]
+      myCourses.sort((a, b) =>
+        a.region.localeCompare(b.region) || a.name.localeCompare(b.name)
+      )
+      setUserCourses(myCourses)
+      setEditAllCourses(currentCourseIds.size === myCourses.length && myCourses.every(c => currentCourseIds.has(c.id)))
+    }
+    setLoadingUserCourses(false)
+    setEditing(true)
+  }
+
+  const toggleEditDayPart = (part: DayPart) => {
+    setEditDayParts(prev => {
+      const next = new Set(prev)
+      if (next.has(part)) next.delete(part)
+      else next.add(part)
+      return next
+    })
+    setEditUseCustomTime(false)
+  }
+
+  const toggleEditCourse = (courseId: string) => {
+    setEditCourseIds(prev => {
+      const next = new Set(prev)
+      if (next.has(courseId)) next.delete(courseId)
+      else next.add(courseId)
+      setEditAllCourses(next.size === userCourses.length)
+      return next
+    })
+  }
+
+  const toggleEditAllCourses = () => {
+    if (editAllCourses) {
+      setEditAllCourses(false)
+      setEditCourseIds(new Set())
+    } else {
+      setEditAllCourses(true)
+      setEditCourseIds(new Set(userCourses.map(c => c.id)))
+    }
+  }
+
+  const editTimeError = editUseCustomTime && editCustomEnd <= editCustomStart
+    ? 'End time must be after start time'
+    : ''
+
+  const canSaveEdit = editCourseIds.size > 0 && (editUseCustomTime || editDayParts.size > 0) && !editTimeError
+
+  const handleSaveEdit = async () => {
+    if (!round || !canSaveEdit) return
+    setSaving(true)
+    setEditError('')
+
+    const parts = Array.from(editDayParts)
+    const timeRange = editUseCustomTime
+      ? { start: editCustomStart, end: editCustomEnd }
+      : computeTimeRange(parts)
+
+    const courseIds = Array.from(editCourseIds)
+
+    // Update the round
+    const { error: roundError } = await supabase
+      .from('rounds')
+      .update({
+        round_date: editDate,
+        time_window_start: timeRange.start,
+        time_window_end: timeRange.end,
+        spots_needed: editSpots,
+        matched_tee_time_id: null,
+        matched_at: null,
+        has_specific_time: false,
+        specific_tee_time: null,
+        specific_course_id: null,
+        status: 'watching',
+      })
+      .eq('id', round.id)
+
+    if (roundError) {
+      setEditError(roundError.message)
+      setSaving(false)
+      return
+    }
+
+    // Replace round_courses
+    await supabase.from('round_courses').delete().eq('round_id', round.id)
+    const { error: coursesError } = await supabase
+      .from('round_courses')
+      .insert(courseIds.map(course_id => ({ round_id: round.id, course_id })))
+
+    if (coursesError) {
+      setEditError(coursesError.message)
+      setSaving(false)
+      return
+    }
+
+    // Re-fetch full round to get updated round_courses with course details
+    const { data: freshRound } = await supabase
+      .from('rounds')
+      .select('*, round_courses(*, courses(*)), rsvps(*)')
+      .eq('id', round.id)
+      .single()
+
+    if (freshRound) {
+      const updated = freshRound as unknown as RoundWithDetails
+      setRound(updated)
+      fetchAvailableTimes(updated)
+    }
+
+    // Send update notification email (fire-and-forget)
+    fetch('/api/notify-round-update', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ roundId: round.id }),
+    }).catch(() => {})
+
+    setEditing(false)
+    setSaving(false)
+  }
+
   if (loading) {
     return (
       <div className="animate-fade-in space-y-6 pt-4 px-5 max-w-lg mx-auto">
@@ -272,6 +468,7 @@ export default function RoundDetail() {
   const rsvpsIn = rsvps.filter(r => r.status === 'in')
   const shareUrl = `${window.location.origin}/r/${round.share_code}`
   const timeLabel = getTimeWindowLabel(round.time_window_start, round.time_window_end)
+  const isOrganizer = !!(user && round.creator_id === user.id)
 
   // Group available times by course
   const groupedTimes = availableTimes.reduce<Record<string, TeeTime[]>>((acc, tt) => {
@@ -339,6 +536,222 @@ export default function RoundDetail() {
             {formatDateShort(round.round_date)}
           </p>
         </div>
+      )}
+
+      {/* ── Edit Round Form ── */}
+      {editing && (
+        <div className="bg-card border border-border rounded-2xl p-5 space-y-5">
+          <h3 className="text-xs font-body font-semibold uppercase tracking-widest text-muted-foreground">
+            Edit Round
+          </h3>
+
+          {/* Date */}
+          <div className="space-y-2">
+            <span className="text-xs font-body font-semibold uppercase tracking-widest text-muted-foreground">Date</span>
+            <div className="relative -mx-5">
+              <div className="flex gap-2 overflow-x-auto px-5 pb-1 no-scrollbar">
+                {dateChips.map(chip => {
+                  const isSelected = editDate === chip.date
+                  return (
+                    <button
+                      key={chip.date}
+                      onClick={() => setEditDate(chip.date)}
+                      className={`shrink-0 flex flex-col items-center w-14 py-2 rounded-xl text-center transition-all duration-150 active:scale-95 select-none ${
+                        isSelected
+                          ? 'bg-primary text-primary-foreground'
+                          : 'bg-muted/50 text-muted-foreground hover:bg-muted'
+                      }`}
+                    >
+                      <span className="text-[10px] font-body font-semibold uppercase tracking-wider">
+                        {chip.dayLabel}
+                      </span>
+                      <span className="text-lg font-display leading-tight mt-0.5">{chip.dateNum}</span>
+                    </button>
+                  )
+                })}
+              </div>
+              <div className="pointer-events-none absolute inset-y-0 right-0 w-10 bg-gradient-to-l from-card to-transparent" />
+            </div>
+          </div>
+
+          {/* Time */}
+          <div className="space-y-2">
+            <span className="text-xs font-body font-semibold uppercase tracking-widest text-muted-foreground">Time</span>
+            <div className="flex gap-2">
+              {DAY_PARTS.map(key => {
+                const isSelected = !editUseCustomTime && editDayParts.has(key)
+                return (
+                  <button
+                    key={key}
+                    onClick={() => toggleEditDayPart(key)}
+                    className={`flex-1 flex items-center justify-center gap-1 h-10 rounded-xl text-xs font-body font-medium transition-all duration-150 active:scale-95 select-none border ${
+                      isSelected
+                        ? 'bg-primary/15 text-primary border-primary/40'
+                        : 'bg-transparent text-muted-foreground border-border hover:border-foreground/20'
+                    }`}
+                  >
+                    {DAY_PART_META[key].label}
+                  </button>
+                )
+              })}
+              <button
+                onClick={() => setEditUseCustomTime(true)}
+                className={`flex-1 flex items-center justify-center gap-1 h-10 rounded-xl text-xs font-body font-medium transition-all duration-150 active:scale-95 select-none border ${
+                  editUseCustomTime
+                    ? 'bg-primary/15 text-primary border-primary/40'
+                    : 'bg-transparent text-muted-foreground border-border hover:border-foreground/20'
+                }`}
+              >
+                Custom
+              </button>
+            </div>
+            {editUseCustomTime && (
+              <>
+                <div className="flex gap-3">
+                  <div className="flex-1 flex flex-col gap-1.5">
+                    <span className="text-xs font-body text-muted-foreground">From</span>
+                    <select
+                      value={editCustomStart}
+                      onChange={e => setEditCustomStart(e.target.value)}
+                      className="h-11 rounded-xl border border-border bg-background text-foreground font-body text-sm px-3 focus:outline-none focus:border-primary transition-colors appearance-none"
+                    >
+                      {TIME_OPTIONS.map(opt => (
+                        <option key={opt.value} value={opt.value}>{opt.label}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="flex-1 flex flex-col gap-1.5">
+                    <span className="text-xs font-body text-muted-foreground">To</span>
+                    <select
+                      value={editCustomEnd}
+                      onChange={e => setEditCustomEnd(e.target.value)}
+                      className="h-11 rounded-xl border border-border bg-background text-foreground font-body text-sm px-3 focus:outline-none focus:border-primary transition-colors appearance-none"
+                    >
+                      {TIME_OPTIONS.map(opt => (
+                        <option key={opt.value} value={opt.value}>{opt.label}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+                {editTimeError && (
+                  <p className="text-xs font-body text-destructive">End time must be after start time</p>
+                )}
+              </>
+            )}
+          </div>
+
+          {/* Players */}
+          <div className="space-y-2">
+            <span className="text-xs font-body font-semibold uppercase tracking-widest text-muted-foreground">Players</span>
+            <div className="flex gap-2">
+              {[2, 3, 4].map(n => (
+                <button
+                  key={n}
+                  onClick={() => setEditSpots(n)}
+                  className={`flex-1 py-2.5 rounded-xl text-lg font-display font-bold transition-all duration-150 active:scale-95 select-none border text-center ${
+                    editSpots === n
+                      ? 'bg-primary/15 text-primary border-primary/40'
+                      : 'bg-transparent text-muted-foreground border-border hover:border-foreground/20'
+                  }`}
+                >
+                  {n}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Courses */}
+          <div className="space-y-2">
+            <span className="text-xs font-body font-semibold uppercase tracking-widest text-muted-foreground">Courses</span>
+            {loadingUserCourses ? (
+              <div className="flex flex-wrap gap-2">
+                {[1, 2, 3].map(i => (
+                  <div key={i} className="skeleton" style={{ height: 36, width: 112 }} />
+                ))}
+              </div>
+            ) : (
+              <div className="flex flex-wrap gap-2">
+                <button
+                  onClick={toggleEditAllCourses}
+                  className={`flex items-center gap-1.5 px-3.5 py-2 rounded-full text-sm font-body font-medium transition-all duration-150 active:scale-95 select-none border ${
+                    editAllCourses
+                      ? 'bg-primary/15 text-primary border-primary/40'
+                      : 'bg-transparent text-muted-foreground border-border hover:border-foreground/20'
+                  }`}
+                >
+                  {editAllCourses && (
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" className="text-primary">
+                      <polyline points="20 6 9 17 4 12" />
+                    </svg>
+                  )}
+                  Any of my courses
+                </button>
+                {userCourses.map(course => {
+                  const isSelected = editCourseIds.has(course.id) && !editAllCourses
+                  return (
+                    <button
+                      key={course.id}
+                      onClick={() => {
+                        if (editAllCourses) {
+                          setEditAllCourses(false)
+                          setEditCourseIds(new Set([course.id]))
+                        } else {
+                          toggleEditCourse(course.id)
+                        }
+                      }}
+                      className={`flex items-center gap-1.5 px-3.5 py-2 rounded-full text-sm font-body font-medium transition-all duration-150 active:scale-95 select-none border ${
+                        isSelected
+                          ? 'bg-primary/15 text-primary border-primary/40'
+                          : 'bg-transparent text-muted-foreground border-border hover:border-foreground/20'
+                      }`}
+                    >
+                      {isSelected && (
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" className="text-primary">
+                          <polyline points="20 6 9 17 4 12" />
+                        </svg>
+                      )}
+                      {course.name}
+                    </button>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+
+          {editError && (
+            <p className="text-sm font-body text-destructive">{editError}</p>
+          )}
+
+          <div className="flex gap-2 pt-1">
+            <button
+              onClick={() => setEditing(false)}
+              className="flex-1 h-11 border border-border text-foreground font-body font-semibold rounded-xl hover:bg-muted/50 transition-colors text-sm"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={handleSaveEdit}
+              disabled={!canSaveEdit || saving}
+              className="flex-1 h-11 bg-primary hover:bg-green-hover text-primary-foreground font-body font-bold rounded-xl transition-colors disabled:opacity-30 disabled:cursor-not-allowed text-sm"
+            >
+              {saving ? 'Saving\u2026' : 'Save Changes'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ── Edit Round button (organizer only, non-booked/cancelled) ── */}
+      {isOrganizer && !editing && round.status !== 'booked' && round.status !== 'cancelled' && (
+        <button
+          onClick={startEditing}
+          className="w-full flex items-center justify-center gap-2 h-11 border border-border text-foreground font-body font-medium rounded-xl hover:bg-muted/50 transition-colors text-sm"
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+            <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+          </svg>
+          Edit Round
+        </button>
       )}
 
       {/* ── Available Now / Watching ── */}
