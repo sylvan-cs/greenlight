@@ -18,7 +18,6 @@ export default function CourseSelector({
 }: CourseSelectorProps) {
   const { user } = useAuth()
   const [courses, setCourses] = useState<Course[]>([])
-  const [njCourses, setNjCourses] = useState<Course[]>([])
   const [loadingCourses, setLoadingCourses] = useState(true)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set(initialSelectedIds))
   const [loadError, setLoadError] = useState(false)
@@ -32,28 +31,19 @@ export default function CourseSelector({
     future.setDate(future.getDate() + 30)
     const futureStr = future.toISOString().split('T')[0]
 
-    const activeFetch = supabase
+    supabase
       .from('courses')
       .select('*, tee_times!inner(id)')
       .eq('tee_times.is_available', true)
       .gte('tee_times.tee_date', todayStr)
       .lte('tee_times.tee_date', futureStr)
-      .neq('region', 'nj')
       .order('region')
       .order('name')
-
-    const njFetch = supabase
-      .from('courses')
-      .select('id, name, city, region, booking_url')
-      .eq('region', 'nj')
-      .order('name')
-
-    Promise.all([activeFetch, njFetch]).then(([activeRes, njRes]) => {
-      if (activeRes.error) setLoadError(true)
-      if (activeRes.data) setCourses(activeRes.data.map((row: any) => { const { tee_times, ...course } = row; return course; }) as Course[])
-      if (njRes.data) setNjCourses(njRes.data as Course[])
-      setLoadingCourses(false)
-    })
+      .then(({ data, error }) => {
+        if (error) setLoadError(true)
+        if (data) setCourses(data.map((row: any) => { const { tee_times, ...course } = row; return course; }) as Course[])
+        setLoadingCourses(false)
+      })
   }, [])
 
   const coursesByRegion = useMemo(() => {
@@ -74,6 +64,7 @@ export default function CourseSelector({
     })
   }
 
+  const regionLabels: Record<string, string> = { ca: 'California', nj: 'New Jersey' }
   const canSave = selectedIds.size > 0
 
   if (loadingCourses) {
@@ -101,7 +92,7 @@ export default function CourseSelector({
       {Array.from(coursesByRegion.entries()).map(([region, regionCourses]) => (
         <section key={region} className="space-y-2.5">
           <h3 className="text-xs font-body font-semibold uppercase tracking-widest text-muted-foreground">
-            {region}
+            {regionLabels[region] ?? region}
           </h3>
           <div className="flex flex-wrap gap-2">
             {regionCourses.map(course => {
@@ -128,24 +119,6 @@ export default function CourseSelector({
           </div>
         </section>
       ))}
-
-      {njCourses.length > 0 && (
-        <section className="space-y-2.5 opacity-50">
-          <h3 className="text-xs font-body font-semibold uppercase tracking-widest text-muted-foreground">
-            🌱 New Jersey · Opening Spring 2026
-          </h3>
-          <div className="flex flex-wrap gap-2">
-            {njCourses.map(course => (
-              <span
-                key={course.id}
-                className="flex items-center px-3.5 py-2 rounded-full text-sm font-body font-medium border border-border text-muted-foreground cursor-default"
-              >
-                {course.name}
-              </span>
-            ))}
-          </div>
-        </section>
-      )}
 
       {/* Course request */}
       <section className="space-y-2.5 pt-2">
