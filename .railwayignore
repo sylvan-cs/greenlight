@@ -1,0 +1,6 @@
+web/
+results/
+.github/
+.vercel/
+migrations/
+__pycache__/
