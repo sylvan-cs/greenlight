@@ -540,7 +540,7 @@ def _golfnow_load_date(page, course, date, api_bodies):
     """Load GolfNow facility page and extract tee time data."""
     slug = course["slug"]
     facility_id = course["facility_id"]
-    url = f"https://www.golfnow.com/tee-times/facility/{slug}/search"
+    url = f"https://www.golfnow.com/tee-times/facility/{slug}/search#date={date}&time=all&players=0"
     date_result = {"date": date, "url": url, "tee_times": [], "status": "unknown"}
 
     try:
