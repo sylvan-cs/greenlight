@@ -1819,10 +1819,21 @@ def _sync_to_supabase(all_results, active_courses):
             if checked_dates:
                 dates_by_course_uuid[course_uuid] = checked_dates
 
+        # Deduplicate rows (same course+date+time can appear from multiple API responses)
+        seen = set()
+        unique_rows = []
+        for row in rows:
+            key = (row["course_id"], row["tee_date"], row["tee_time"])
+            if key not in seen:
+                seen.add(key)
+                unique_rows.append(row)
+        if len(unique_rows) < len(rows):
+            print(f"  Supabase: deduplicated {len(rows)} -> {len(unique_rows)} tee times")
+
         # Upsert in batches of 100
         upserted = 0
-        for i in range(0, len(rows), 100):
-            chunk = rows[i:i + 100]
+        for i in range(0, len(unique_rows), 100):
+            chunk = unique_rows[i:i + 100]
             sb.table("tee_times").upsert(
                 chunk, on_conflict="course_id,tee_date,tee_time"
             ).execute()
