@@ -63,6 +63,7 @@ COURSES = [
         "system": "golfnow",
         "facility_id": 5095,
         "slug": "5095-galloping-hill-golf-course",
+        "ezlinks_url": "https://unioncountygolf.ezlinksgolf.com/index.html#/search",
     },
     {
         "name": "Flanders Valley Golf Course",
@@ -418,7 +419,12 @@ def check_golfnow(context, courses):
                     )
                     entry["body_preview"] = json.dumps(body, indent=2)[:3000]
                     # Capture full body from tee-time results API
-                    if "tee-time" in resp.url.lower() and resp.status == 200:
+                    # Match both GolfNow and EZLinks API patterns
+                    if resp.status == 200 and (
+                        "tee-time" in resp.url.lower()
+                        or "teetime" in resp.url.lower()
+                        or ("search" in resp.url.lower() and isinstance(body, dict) and "ttResults" in body)
+                    ):
                         tee_time_api_bodies.append(body)
                 except Exception:
                     pass
@@ -555,10 +561,15 @@ def _parse_golfnow_api_teetimes(api_bodies, facility_id):
 
 
 def _golfnow_load_date(page, course, date, api_bodies):
-    """Load GolfNow facility page and extract tee time data."""
+    """Load GolfNow/EZLinks facility page and extract tee time data."""
     slug = course["slug"]
     facility_id = course["facility_id"]
-    url = f"https://www.golfnow.com/tee-times/facility/{slug}/search#date={date}&time=all&players=0"
+    # Use EZLinks portal URL if available (some courses only list times there)
+    ezlinks_url = course.get("ezlinks_url")
+    if ezlinks_url:
+        url = f"{ezlinks_url.split('#')[0]}#/search/{date}/any"
+    else:
+        url = f"https://www.golfnow.com/tee-times/facility/{slug}/search#date={date}&time=all&players=0"
     date_result = {"date": date, "url": url, "tee_times": [], "status": "unknown"}
 
     try:
