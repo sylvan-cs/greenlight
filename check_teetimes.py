@@ -1430,6 +1430,9 @@ def _parse_tee_time_text(text):
 
 def check_ezlinks(courses):
     """Check all EZLinks courses via direct API. Returns {key: result} dict."""
+    import urllib.request
+    import http.cookiejar
+
     results = {}
     for course in courses:
         key = course["key"]
@@ -1437,57 +1440,63 @@ def check_ezlinks(courses):
         course_ids = course["ezlinks_course_ids"]
         print(f"\n--- {course['name']} ({course['location']}) ---\n")
 
-        result = {"course": course["name"], "system": "ezlinks", "dates": {}}
+        result = {
+            "course": course["name"],
+            "system": "ezlinks",
+            "checked_at": datetime.now().isoformat(),
+            "dates_checked": {},
+        }
 
         try:
-            session = requests.Session()
-            session.headers.update({
+            # Set up cookie-aware opener
+            cj = http.cookiejar.CookieJar()
+            opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(cj))
+            headers = {
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36",
                 "Referer": f"{base}/",
                 "Origin": base,
-            })
+            }
 
             # Init session (required for cookies)
-            init_resp = session.get(f"{base}/api/search/init", timeout=15)
-            init_resp.raise_for_status()
+            init_req = urllib.request.Request(f"{base}/api/search/init", headers=headers)
+            with opener.open(init_req, timeout=15) as resp:
+                resp.read()
 
-            for date_str in UPCOMING_DATES:
+            for label, date_str in DATES_TO_CHECK:
                 dt = datetime.strptime(date_str, "%Y-%m-%d")
                 search_date = dt.strftime("%m/%d/%Y")
-                print(f"  [{date_str}] Loading {date_str}...")
+                print(f"  [{date_str}] {date_str} ... ", end="")
 
                 try:
-                    resp = session.post(
+                    body = json.dumps({
+                        "p01": course_ids,
+                        "p02": search_date,
+                        "p03": "5:00 AM",
+                        "p04": "8:00 PM",
+                        "p05": 0,   # holes: 0=any
+                        "p06": 0,   # players: 0=any
+                        "p07": False,
+                    }).encode("utf-8")
+                    search_req = urllib.request.Request(
                         f"{base}/api/search/search",
-                        json={
-                            "p01": course_ids,
-                            "p02": search_date,
-                            "p03": "5:00 AM",
-                            "p04": "8:00 PM",
-                            "p05": 0,   # holes: 0=any
-                            "p06": 0,   # players: 0=any
-                            "p07": False,
-                        },
-                        headers={"Content-Type": "application/json; charset=utf-8"},
-                        timeout=15,
+                        data=body,
+                        headers={**headers, "Content-Type": "application/json; charset=utf-8"},
+                        method="POST",
                     )
-                    resp.raise_for_status()
-                    data = resp.json()
+                    with opener.open(search_req, timeout=15) as resp:
+                        data = json.loads(resp.read())
 
                     reservations = data.get("r06", [])
                     tee_times = []
                     for r in reservations:
                         tee_time_str = r.get("r15", "")  # ISO datetime
-                        price_min = r.get("r25", r.get("r08", ""))
-                        price_max = r.get("r26", r.get("r08", ""))
-                        players = r.get("r11", 0)  # PlayersAvailable
-                        course_name = r.get("r16", "")
+                        price = r.get("r08", 0)
+                        players = r.get("r11", 0)
                         tee_times.append({
                             "time": tee_time_str,
-                            "price": f"${price_min}-${price_max}" if price_min != price_max else f"${price_min}",
+                            "price": f"${price}" if price else None,
                             "players_available": players,
                             "holes": 18,
-                            "course_name": course_name,
                         })
 
                     # Deduplicate by time (multiple pricing tiers create dups)
@@ -1500,24 +1509,21 @@ def check_ezlinks(courses):
                             unique_times.append(tt)
 
                     status = "ok" if unique_times else "no_availability"
-                    result["dates"][date_str] = {
+                    result["dates_checked"][label] = {
                         "date": date_str,
                         "tee_times": unique_times,
                         "status": status,
                     }
-                    print(f"    Status: {status}")
-                    print(f"    Tee times: {len(unique_times)}")
-                    for tt in unique_times[:5]:
-                        print(f"      {tt['time']} | {tt['price']} | {tt['players_available']}p")
+                    print(f"{len(unique_times)} times")
 
                 except Exception as e:
-                    result["dates"][date_str] = {"date": date_str, "tee_times": [], "status": "error", "error": str(e)}
-                    print(f"    Error: {e}")
+                    result["dates_checked"][label] = {"date": date_str, "tee_times": [], "status": "error", "error": str(e)}
+                    print(f"error: {e}")
 
         except Exception as e:
             print(f"  Init error: {e}")
-            for date_str in UPCOMING_DATES:
-                result["dates"][date_str] = {"date": date_str, "tee_times": [], "status": "error", "error": str(e)}
+            for label, date_str in DATES_TO_CHECK:
+                result["dates_checked"][label] = {"date": date_str, "tee_times": [], "status": "error", "error": str(e)}
 
         results[key] = result
     return results
