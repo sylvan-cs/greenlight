@@ -127,7 +127,7 @@ COURSES = [
         "location": "Jersey City, NJ",
         "system": "chronogolf",
         "slug": "skyway-golf-course",
-        "course_uuid": None,
+        "course_uuid": "0b833d14-8c0d-46ca-82e6-7b992de4761e",
     },
     # ForeUP courses
     {
@@ -136,6 +136,8 @@ COURSES = [
         "location": "Colts Neck, NJ",
         "system": "foreup",
         "course_id": 20155,
+        "schedule_id": 3782,
+        "booking_class": 3686,
     },
     {
         "name": "Shark River Golf Course",
@@ -143,6 +145,8 @@ COURSES = [
         "location": "Neptune, NJ",
         "system": "foreup",
         "course_id": 20158,
+        "schedule_id": 3782,
+        "booking_class": 3686,
     },
     {
         "name": "Mercer Oaks Golf Course",
@@ -150,6 +154,8 @@ COURSES = [
         "location": "West Windsor, NJ",
         "system": "foreup",
         "course_id": 20965,
+        "schedule_id": 7788,
+        "booking_class": 11143,
     },
     {
         "name": "Windsor Golf Club",
@@ -1452,11 +1458,9 @@ def check_teeitup(courses):
                         raw_time = tt.get("teetime", "")
                         try:
                             dt = datetime.fromisoformat(raw_time.replace("Z", "+00:00"))
-                            # Convert UTC to Eastern (UTC-4 or UTC-5)
-                            # Use a simple offset; courses are in NJ (Eastern)
-                            from datetime import timezone as tz
-                            eastern_offset = timedelta(hours=-4)  # EDT
-                            dt_local = dt.astimezone(tz(eastern_offset))
+                            # Convert UTC to Eastern (handles EST/EDT automatically)
+                            from zoneinfo import ZoneInfo
+                            dt_local = dt.astimezone(ZoneInfo("America/New_York"))
                             time_24 = dt_local.strftime("%H:%M")
                         except Exception:
                             time_24 = raw_time
@@ -1690,9 +1694,23 @@ def _sync_to_supabase(all_results, active_courses):
 
         # Auto-create missing courses
         NEW_COURSES = {
+            # California
             "baylands": {"name": "Baylands Golf Links", "region": "ca", "state": "CA", "city": "Palo Alto", "booking_system": "golfnow", "scan_enabled": True, "booking_url": "https://baylandsbw.ezlinksgolf.com/index.html#/search"},
             "moffett-field": {"name": "Moffett Field Golf Club", "region": "ca", "state": "CA", "city": "Mountain View", "booking_system": "golfnow", "scan_enabled": True, "booking_url": "https://moffettfielddaily.ezlinksgolf.com/index.html#/search"},
             "shoreline": {"name": "Shoreline Golf Links", "region": "ca", "state": "CA", "city": "Mountain View", "booking_system": "clubcaddie", "scan_enabled": True, "booking_url": "https://shoreline.clubcaddie.com"},
+            # New Jersey
+            "galloping-hill": {"name": "Galloping Hill Golf Course", "region": "nj", "state": "NJ", "city": "Kenilworth", "booking_system": "golfnow", "scan_enabled": True, "booking_url": "https://www.golfnow.com/tee-times/facility/5095-galloping-hill-golf-course/search"},
+            "flanders-valley": {"name": "Flanders Valley Golf Course", "region": "nj", "state": "NJ", "city": "Flanders", "booking_system": "golfnow", "scan_enabled": True, "booking_url": "https://www.golfnow.com/tee-times/facility/5151-flanders-valley-golf-course-blue-to-white/search"},
+            "neshanic-valley": {"name": "Neshanic Valley Golf Course", "region": "nj", "state": "NJ", "city": "Neshanic Station", "booking_system": "golfnow", "scan_enabled": True, "booking_url": "https://www.golfnow.com/tee-times/facility/7083-neshanic-valley-golf-course/search"},
+            "rock-spring": {"name": "Rock Spring Golf Club", "region": "nj", "state": "NJ", "city": "West Orange", "booking_system": "golfnow", "scan_enabled": True, "booking_url": "https://www.golfnow.com/tee-times/facility/19083-rock-spring-golf-club-at-west-orange/search"},
+            "cranbury": {"name": "Cranbury Golf Club", "region": "nj", "state": "NJ", "city": "West Windsor", "booking_system": "golfnow", "scan_enabled": True, "booking_url": "https://www.golfnow.com/tee-times/facility/3250-cranbury-golf-club/search"},
+            "francis-byrne": {"name": "Francis A. Byrne Golf Course", "region": "nj", "state": "NJ", "city": "West Orange", "booking_system": "teeitup", "scan_enabled": True, "booking_url": "https://essex-county-golf.book.teeitup.golf/?course=5962"},
+            "hendricks-field": {"name": "Hendricks Field Golf Course", "region": "nj", "state": "NJ", "city": "Belleville", "booking_system": "teeitup", "scan_enabled": True, "booking_url": "https://essex-county-golf.book.teeitup.golf/?course=5965"},
+            "weequahic": {"name": "Weequahic Park Golf Course", "region": "nj", "state": "NJ", "city": "Newark", "booking_system": "teeitup", "scan_enabled": True, "booking_url": "https://essex-county-golf.book.teeitup.golf/?course=5966"},
+            "skyway": {"name": "Skyway Golf Course", "region": "nj", "state": "NJ", "city": "Jersey City", "booking_system": "chronogolf", "scan_enabled": True, "booking_url": "https://www.chronogolf.com/club/skyway-golf-course/teetimes"},
+            "hominy-hill": {"name": "Hominy Hill Golf Course", "region": "nj", "state": "NJ", "city": "Colts Neck", "booking_system": "foreup", "scan_enabled": True, "booking_url": "https://foreupsoftware.com/index.php/booking/20155/teetimes"},
+            "shark-river": {"name": "Shark River Golf Course", "region": "nj", "state": "NJ", "city": "Neptune", "booking_system": "foreup", "scan_enabled": True, "booking_url": "https://foreupsoftware.com/index.php/booking/20158/teetimes"},
+            "mercer-oaks": {"name": "Mercer Oaks Golf Course", "region": "nj", "state": "NJ", "city": "West Windsor", "booking_system": "foreup", "scan_enabled": True, "booking_url": "https://foreupsoftware.com/index.php/booking/20965/teetimes"},
         }
         for slug, info in NEW_COURSES.items():
             if slug not in slug_to_uuid:
