@@ -2,9 +2,9 @@ import React, { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../contexts/AuthContext'
-import { getDraft, resetDraft, computeTimeRange, DAY_PARTS, DAY_PART_META, type DayPart } from '../lib/roundStore'
-import { generateDateChips, formatTime, generateShareCode } from '../lib/helpers'
-import type { Course, Round } from '../lib/types'
+import { getDraft, updateDraft, computeTimeRange, DAY_PARTS, DAY_PART_META, type DayPart } from '../lib/roundStore'
+import { generateDateChips, formatTime } from '../lib/helpers'
+import type { Course } from '../lib/types'
 
 const dateChips = generateDateChips()
 
@@ -91,7 +91,6 @@ export default function StartRound() {
   const [allCourses, setAllCourses] = useState(draft.courseIds.length === 0)
   const [loadingCourses, setLoadingCourses] = useState(true)
   const hasFetchedCourses = useRef(false)
-  const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
 
   useEffect(() => {
@@ -166,72 +165,26 @@ export default function StartRound() {
     ? 'End time must be after start time'
     : ''
 
-  const handleCreate = async () => {
+  const handleNext = () => {
     if (!user) return
     if (timeError) return
-    setSubmitting(true)
-    setError('')
 
-    // Compute time range
     const parts = Array.from(selectedDayParts)
     const timeRange = useCustomTime
       ? { start: customStart, end: customEnd }
       : computeTimeRange(parts)
 
-    const courseIds = Array.from(selectedCourseIds)
-    const shareCode = generateShareCode()
-    const creatorName = user.user_metadata?.full_name ?? 'Unknown'
+    updateDraft({
+      date: selectedDate,
+      dayParts: parts,
+      useCustomTime,
+      timeStart: timeRange.start,
+      timeEnd: timeRange.end,
+      courseIds: Array.from(selectedCourseIds),
+      spots,
+    })
 
-    const { data: round, error: roundError } = await supabase
-      .from('rounds')
-      .insert({
-        creator_id: user.id,
-        round_date: selectedDate,
-        time_window_start: timeRange.start,
-        time_window_end: timeRange.end,
-        spots_needed: spots,
-        has_specific_time: false,
-        specific_tee_time: null,
-        specific_course_id: null,
-        share_code: shareCode,
-        status: 'watching',
-      })
-      .select('*')
-      .single() as unknown as { data: Round | null; error: { message: string } | null }
-
-    if (roundError || !round) {
-      setError(roundError?.message ?? 'Failed to create round')
-      setSubmitting(false)
-      return
-    }
-
-    const { error: coursesError } = await supabase
-      .from('round_courses')
-      .insert(courseIds.map(course_id => ({ round_id: round.id, course_id })))
-
-    if (coursesError) {
-      setError(coursesError.message)
-      setSubmitting(false)
-      return
-    }
-
-    const { error: rsvpError } = await supabase
-      .from('rsvps')
-      .insert({
-        round_id: round.id,
-        user_id: user.id,
-        name: creatorName,
-        status: 'in',
-      })
-
-    if (rsvpError) {
-      setError(rsvpError.message)
-      setSubmitting(false)
-      return
-    }
-
-    resetDraft()
-    navigate(`/round/${round.id}`)
+    navigate('/start/available')
   }
 
   const canProceed = selectedCourseIds.size > 0 && (useCustomTime || selectedDayParts.size > 0) && !timeError
@@ -485,25 +438,21 @@ export default function StartRound() {
         <p className="text-sm font-body text-destructive text-center">{error}</p>
       )}
 
-      {/* ── Start Watching Button ── */}
+      {/* ── Next Button ── */}
       <button
-        onClick={handleCreate}
-        disabled={!canProceed || submitting}
+        onClick={handleNext}
+        disabled={!canProceed}
         className="w-full h-14 flex items-center justify-center gap-2 bg-primary hover:bg-green-hover text-primary-foreground font-bold rounded-xl transition-colors disabled:opacity-30 disabled:cursor-not-allowed text-base font-body"
       >
-        {submitting ? 'Creating\u2026' : (
-          <>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z" />
-              <line x1="4" y1="22" x2="4" y2="15" />
-            </svg>
-            Start Watching
-          </>
-        )}
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <line x1="5" y1="12" x2="19" y2="12" />
+          <polyline points="12 5 19 12 12 19" />
+        </svg>
+        Check Availability
       </button>
 
       <p className="text-xs font-body text-muted-foreground text-center">
-        We'll watch for tee times and notify you when one opens up.
+        We'll check for open tee times matching your preferences.
       </p>
     </div>
   )
