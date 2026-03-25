@@ -492,8 +492,17 @@ def _parse_golfnow_api_teetimes(api_bodies, facility_id):
             if not isinstance(item, dict):
                 continue
 
-            # Time: prefer "time" (ISO datetime), fall back to formattedTime
-            time_str = item.get("time")
+            # Time: "time" may be a string ("2026-03-26T12:40:00") or a dict
+            # ({"date": "2026-03-26T12:40:00+00:00", "formatted": "12:40", ...})
+            raw_time = item.get("time")
+            time_str = None
+            if isinstance(raw_time, dict):
+                time_str = raw_time.get("date") or raw_time.get("formatted")
+                if not time_str and raw_time.get("formatted"):
+                    meridian = raw_time.get("formattedTimeMeridian", "").replace("<sup>", "").replace("</sup>", "")
+                    time_str = f"{raw_time['formatted']} {meridian}".strip()
+            elif raw_time:
+                time_str = str(raw_time)
             if not time_str:
                 ft = item.get("formattedTime")
                 fm = item.get("formattedTimeMeridian", "")
