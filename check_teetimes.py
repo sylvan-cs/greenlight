@@ -60,10 +60,9 @@ COURSES = [
         "name": "Galloping Hill Golf Course",
         "key": "galloping_hill",
         "location": "Kenilworth, NJ",
-        "system": "golfnow",
-        "facility_id": 5095,
-        "slug": "5095-galloping-hill-golf-course",
-        "ezlinks_url": "https://unioncountygolf.ezlinksgolf.com/index.html#/search",
+        "system": "ezlinks",
+        "ezlinks_base": "https://unioncountygolf.ezlinksgolf.com",
+        "ezlinks_course_ids": [4549],
     },
     {
         "name": "Flanders Valley Golf Course",
@@ -344,6 +343,10 @@ def run(scan_all=False):
     if "teeitup" in by_system:
         all_results.update(check_teeitup(by_system["teeitup"]))
 
+    # EZLinks uses direct API calls (no browser needed)
+    if "ezlinks" in by_system:
+        all_results.update(check_ezlinks(by_system["ezlinks"]))
+
     # Save per-course JSON files and combined findings
     for key, result in all_results.items():
         _save(result, f"{key}.json")
@@ -419,12 +422,7 @@ def check_golfnow(context, courses):
                     )
                     entry["body_preview"] = json.dumps(body, indent=2)[:3000]
                     # Capture full body from tee-time results API
-                    # Match both GolfNow and EZLinks API patterns
-                    if resp.status == 200 and (
-                        "tee-time" in resp.url.lower()
-                        or "teetime" in resp.url.lower()
-                        or ("search" in resp.url.lower() and isinstance(body, dict) and "ttResults" in body)
-                    ):
+                    if "tee-time" in resp.url.lower() and resp.status == 200:
                         tee_time_api_bodies.append(body)
                 except Exception:
                     pass
@@ -1427,6 +1425,104 @@ def _parse_tee_time_text(text):
 # TeeItUp / Kenna
 # =========================================================================
 
+# ── EZLinks (Union County, etc.) ──────────────────────────────────────
+
+
+def check_ezlinks(courses):
+    """Check all EZLinks courses via direct API. Returns {key: result} dict."""
+    results = {}
+    for course in courses:
+        key = course["key"]
+        base = course["ezlinks_base"]
+        course_ids = course["ezlinks_course_ids"]
+        print(f"\n--- {course['name']} ({course['location']}) ---\n")
+
+        result = {"course": course["name"], "system": "ezlinks", "dates": {}}
+
+        try:
+            session = requests.Session()
+            session.headers.update({
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36",
+                "Referer": f"{base}/",
+                "Origin": base,
+            })
+
+            # Init session (required for cookies)
+            init_resp = session.get(f"{base}/api/search/init", timeout=15)
+            init_resp.raise_for_status()
+
+            for date_str in UPCOMING_DATES:
+                dt = datetime.strptime(date_str, "%Y-%m-%d")
+                search_date = dt.strftime("%m/%d/%Y")
+                print(f"  [{date_str}] Loading {date_str}...")
+
+                try:
+                    resp = session.post(
+                        f"{base}/api/search/search",
+                        json={
+                            "p01": course_ids,
+                            "p02": search_date,
+                            "p03": "5:00 AM",
+                            "p04": "8:00 PM",
+                            "p05": 0,   # holes: 0=any
+                            "p06": 0,   # players: 0=any
+                            "p07": False,
+                        },
+                        headers={"Content-Type": "application/json; charset=utf-8"},
+                        timeout=15,
+                    )
+                    resp.raise_for_status()
+                    data = resp.json()
+
+                    reservations = data.get("r06", [])
+                    tee_times = []
+                    for r in reservations:
+                        tee_time_str = r.get("r15", "")  # ISO datetime
+                        price_min = r.get("r25", r.get("r08", ""))
+                        price_max = r.get("r26", r.get("r08", ""))
+                        players = r.get("r11", 0)  # PlayersAvailable
+                        course_name = r.get("r16", "")
+                        tee_times.append({
+                            "time": tee_time_str,
+                            "price": f"${price_min}-${price_max}" if price_min != price_max else f"${price_min}",
+                            "players_available": players,
+                            "holes": 18,
+                            "course_name": course_name,
+                        })
+
+                    # Deduplicate by time (multiple pricing tiers create dups)
+                    seen_times = set()
+                    unique_times = []
+                    for tt in tee_times:
+                        t = tt["time"]
+                        if t not in seen_times:
+                            seen_times.add(t)
+                            unique_times.append(tt)
+
+                    status = "ok" if unique_times else "no_availability"
+                    result["dates"][date_str] = {
+                        "date": date_str,
+                        "tee_times": unique_times,
+                        "status": status,
+                    }
+                    print(f"    Status: {status}")
+                    print(f"    Tee times: {len(unique_times)}")
+                    for tt in unique_times[:5]:
+                        print(f"      {tt['time']} | {tt['price']} | {tt['players_available']}p")
+
+                except Exception as e:
+                    result["dates"][date_str] = {"date": date_str, "tee_times": [], "status": "error", "error": str(e)}
+                    print(f"    Error: {e}")
+
+        except Exception as e:
+            print(f"  Init error: {e}")
+            for date_str in UPCOMING_DATES:
+                result["dates"][date_str] = {"date": date_str, "tee_times": [], "status": "error", "error": str(e)}
+
+        results[key] = result
+    return results
+
+
 TEEITUP_API = "https://phx-api-be-east-1b.kenna.io/v2/tee-times"
 
 
@@ -1722,7 +1818,7 @@ def _sync_to_supabase(all_results, active_courses):
             "moffett-field": {"name": "Moffett Field Golf Club", "region": "ca", "state": "CA", "city": "Mountain View", "booking_system": "golfnow", "scan_enabled": True, "booking_url": "https://moffettfielddaily.ezlinksgolf.com/index.html#/search"},
             "shoreline": {"name": "Shoreline Golf Links", "region": "ca", "state": "CA", "city": "Mountain View", "booking_system": "clubcaddie", "scan_enabled": True, "booking_url": "https://shoreline.clubcaddie.com"},
             # New Jersey
-            "galloping-hill": {"name": "Galloping Hill Golf Course", "region": "nj", "state": "NJ", "city": "Kenilworth", "booking_system": "golfnow", "scan_enabled": True, "booking_url": "https://www.golfnow.com/tee-times/facility/5095-galloping-hill-golf-course/search"},
+            "galloping-hill": {"name": "Galloping Hill Golf Course", "region": "nj", "state": "NJ", "city": "Kenilworth", "booking_system": "ezlinks", "scan_enabled": True, "booking_url": "https://unioncountygolf.ezlinksgolf.com/index.html#/search"},
             "flanders-valley": {"name": "Flanders Valley Golf Course", "region": "nj", "state": "NJ", "city": "Flanders", "booking_system": "golfnow", "scan_enabled": True, "booking_url": "https://www.golfnow.com/tee-times/facility/5151-flanders-valley-golf-course-blue-to-white/search"},
             "neshanic-valley": {"name": "Neshanic Valley Golf Course", "region": "nj", "state": "NJ", "city": "Neshanic Station", "booking_system": "golfnow", "scan_enabled": True, "booking_url": "https://www.golfnow.com/tee-times/facility/7083-neshanic-valley-golf-course/search"},
             "rock-spring": {"name": "Rock Spring Golf Club", "region": "nj", "state": "NJ", "city": "West Orange", "booking_system": "golfnow", "scan_enabled": True, "booking_url": "https://www.golfnow.com/tee-times/facility/19083-rock-spring-golf-club-at-west-orange/search"},
