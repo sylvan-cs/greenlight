@@ -44,10 +44,10 @@ else:
 
 TODAY = datetime.now().strftime("%Y-%m-%d")
 
-# Scan the next 14 days by default (covers all near-term booking windows)
+# Scan the next 7 days by default (covers typical booking windows)
 UPCOMING_DATES = [
     (datetime.now() + timedelta(days=d)).strftime("%Y-%m-%d")
-    for d in range(1, 15)
+    for d in range(1, 8)
 ]
 
 # Will be populated at runtime from open rounds in Supabase

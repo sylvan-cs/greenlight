@@ -3,5 +3,5 @@ builder = "DOCKERFILE"
 dockerfilePath = "Dockerfile"
 
 [deploy]
-cronSchedule = "*/10 * * * *"
+cronSchedule = "*/20 * * * *"
 startCommand = "python check_teetimes.py"
