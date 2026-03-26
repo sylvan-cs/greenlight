@@ -1429,103 +1429,103 @@ def _parse_tee_time_text(text):
 
 
 def check_ezlinks(courses):
-    """Check all EZLinks courses via direct API. Returns {key: result} dict."""
-    import urllib.request
-    import http.cookiejar
-
+    """Check all EZLinks courses via Playwright (Cloudflare-protected). Returns {key: result} dict."""
     results = {}
-    for course in courses:
-        key = course["key"]
-        base = course["ezlinks_base"]
-        course_ids = course["ezlinks_course_ids"]
-        print(f"\n--- {course['name']} ({course['location']}) ---\n")
 
-        result = {
-            "course": course["name"],
-            "system": "ezlinks",
-            "checked_at": datetime.now().isoformat(),
-            "dates_checked": {},
-        }
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch(headless=True)
+        context = browser.new_context(
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36",
+            viewport={"width": 1280, "height": 900},
+        )
+        page = context.new_page()
 
-        try:
-            # Set up cookie-aware opener
-            cj = http.cookiejar.CookieJar()
-            opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(cj))
-            headers = {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36",
-                "Referer": f"{base}/",
-                "Origin": base,
+        for course in courses:
+            key = course["key"]
+            base = course["ezlinks_base"]
+            course_ids = course["ezlinks_course_ids"]
+            print(f"\n--- {course['name']} ({course['location']}) ---\n")
+
+            result = {
+                "course": course["name"],
+                "system": "ezlinks",
+                "checked_at": datetime.now().isoformat(),
+                "dates_checked": {},
             }
 
-            # Init session (required for cookies)
-            init_req = urllib.request.Request(f"{base}/api/search/init", headers=headers)
-            with opener.open(init_req, timeout=15) as resp:
-                resp.read()
+            try:
+                # Load the SPA to pass Cloudflare and get session cookies
+                page.goto(f"{base}/index.html#/search", wait_until="networkidle", timeout=30000)
+                page.wait_for_timeout(2000)
 
-            for label, date_str in DATES_TO_CHECK:
-                dt = datetime.strptime(date_str, "%Y-%m-%d")
-                search_date = dt.strftime("%m/%d/%Y")
-                print(f"  [{date_str}] {date_str} ... ", end="")
+                for label, date_str in DATES_TO_CHECK:
+                    dt = datetime.strptime(date_str, "%Y-%m-%d")
+                    search_date = dt.strftime("%m/%d/%Y")
+                    print(f"  [{date_str}] {date_str} ... ", end="")
 
-                try:
-                    body = json.dumps({
-                        "p01": course_ids,
-                        "p02": search_date,
-                        "p03": "5:00 AM",
-                        "p04": "8:00 PM",
-                        "p05": 0,   # holes: 0=any
-                        "p06": 0,   # players: 0=any
-                        "p07": False,
-                    }).encode("utf-8")
-                    search_req = urllib.request.Request(
-                        f"{base}/api/search/search",
-                        data=body,
-                        headers={**headers, "Content-Type": "application/json; charset=utf-8"},
-                        method="POST",
-                    )
-                    with opener.open(search_req, timeout=15) as resp:
-                        data = json.loads(resp.read())
+                    try:
+                        # Call the EZLinks search API from within the browser context
+                        data = page.evaluate("""async (args) => {
+                            const resp = await fetch(args.base + '/api/search/search', {
+                                method: 'POST',
+                                headers: {'Content-Type': 'application/json; charset=utf-8'},
+                                body: JSON.stringify({
+                                    p01: args.courseIds,
+                                    p02: args.searchDate,
+                                    p03: '5:00 AM',
+                                    p04: '8:00 PM',
+                                    p05: 0,
+                                    p06: 0,
+                                    p07: false,
+                                }),
+                            });
+                            return await resp.json();
+                        }""", {"base": base, "courseIds": course_ids, "searchDate": search_date})
 
-                    reservations = data.get("r06", [])
-                    tee_times = []
-                    for r in reservations:
-                        tee_time_str = r.get("r15", "")  # ISO datetime
-                        price = r.get("r08", 0)
-                        players = r.get("r11", 0)
-                        tee_times.append({
-                            "time": tee_time_str,
-                            "price": f"${price}" if price else None,
-                            "players_available": players,
-                            "holes": 18,
-                        })
+                        reservations = data.get("r06", [])
+                        tee_times = []
+                        for r in reservations:
+                            tee_time_str = r.get("r15", "")
+                            price = r.get("r08", 0)
+                            players = r.get("r11", 0)
+                            tee_times.append({
+                                "time": tee_time_str,
+                                "price": f"${price}" if price else None,
+                                "players_available": players,
+                                "holes": 18,
+                            })
 
-                    # Deduplicate by time (multiple pricing tiers create dups)
-                    seen_times = set()
-                    unique_times = []
-                    for tt in tee_times:
-                        t = tt["time"]
-                        if t not in seen_times:
-                            seen_times.add(t)
-                            unique_times.append(tt)
+                        # Deduplicate by time (multiple pricing tiers)
+                        seen_times = set()
+                        unique_times = []
+                        for tt in tee_times:
+                            t = tt["time"]
+                            if t not in seen_times:
+                                seen_times.add(t)
+                                unique_times.append(tt)
 
-                    status = "ok" if unique_times else "no_availability"
-                    result["dates_checked"][label] = {
-                        "date": date_str,
-                        "tee_times": unique_times,
-                        "status": status,
-                    }
-                    print(f"{len(unique_times)} times")
+                        status = "ok" if unique_times else "no_availability"
+                        result["dates_checked"][label] = {
+                            "date": date_str,
+                            "tee_times": unique_times,
+                            "status": status,
+                        }
+                        print(f"{len(unique_times)} times")
 
-                except Exception as e:
+                    except Exception as e:
+                        result["dates_checked"][label] = {"date": date_str, "tee_times": [], "status": "error", "error": str(e)}
+                        print(f"error: {e}")
+
+            except Exception as e:
+                print(f"  Page load error: {e}")
+                for label, date_str in DATES_TO_CHECK:
                     result["dates_checked"][label] = {"date": date_str, "tee_times": [], "status": "error", "error": str(e)}
-                    print(f"error: {e}")
 
-        except Exception as e:
-            print(f"  Init error: {e}")
-            for label, date_str in DATES_TO_CHECK:
-                result["dates_checked"][label] = {"date": date_str, "tee_times": [], "status": "error", "error": str(e)}
+            results[key] = result
 
-        results[key] = result
+        page.close()
+        browser.close()
+
     return results
 
 
