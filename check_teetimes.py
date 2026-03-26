@@ -1455,8 +1455,8 @@ def check_ezlinks(courses):
 
             try:
                 # Load the SPA to pass Cloudflare and get session cookies
-                page.goto(f"{base}/index.html#/search", wait_until="networkidle", timeout=30000)
-                page.wait_for_timeout(2000)
+                page.goto(f"{base}/index.html#/search", wait_until="domcontentloaded", timeout=30000)
+                page.wait_for_timeout(5000)  # Let Cloudflare challenge resolve
 
                 for label, date_str in DATES_TO_CHECK:
                     dt = datetime.strptime(date_str, "%Y-%m-%d")
