@@ -6,7 +6,7 @@
     "from_email": "The Starter <hello@thestarter.golf>"
   },
   "courses": {
-    "galloping_hill": { "enabled": true },
+    "galloping_hill": { "enabled": false },
     "flanders_valley": { "enabled": true },
     "neshanic_valley": { "enabled": true },
     "rock_spring": { "enabled": true },
