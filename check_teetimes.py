@@ -1433,11 +1433,16 @@ def check_ezlinks(courses):
     results = {}
 
     with sync_playwright() as pw:
-        browser = pw.chromium.launch(headless=True)
+        browser = pw.chromium.launch(
+            headless=True,
+            args=["--disable-blink-features=AutomationControlled"],
+        )
         context = browser.new_context(
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36",
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
             viewport={"width": 1280, "height": 900},
         )
+        # Hide webdriver property
+        context.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
         page = context.new_page()
 
         for course in courses:
@@ -1454,9 +1459,15 @@ def check_ezlinks(courses):
             }
 
             try:
-                # Load the SPA to pass Cloudflare and get session cookies
+                # Load the SPA to pass Cloudflare
                 page.goto(f"{base}/index.html#/search", wait_until="domcontentloaded", timeout=30000)
-                page.wait_for_timeout(5000)  # Let Cloudflare challenge resolve
+                # Wait for Cloudflare challenge + SPA init
+                page.wait_for_timeout(8000)
+
+                # Check if we passed Cloudflare (SPA should have a search form)
+                page_url = page.url
+                page_title = page.title()
+                print(f"  Page: {page_title[:60]} ({page_url[:80]})")
 
                 for label, date_str in DATES_TO_CHECK:
                     dt = datetime.strptime(date_str, "%Y-%m-%d")
@@ -1464,8 +1475,8 @@ def check_ezlinks(courses):
                     print(f"  [{date_str}] {date_str} ... ", end="")
 
                     try:
-                        # Call the EZLinks search API from within the browser context
-                        data = page.evaluate("""async (args) => {
+                        # Call the search API from the browser context
+                        resp_text = page.evaluate("""async (args) => {
                             const resp = await fetch(args.base + '/api/search/search', {
                                 method: 'POST',
                                 headers: {'Content-Type': 'application/json; charset=utf-8'},
@@ -1479,9 +1490,14 @@ def check_ezlinks(courses):
                                     p07: false,
                                 }),
                             });
-                            return await resp.json();
+                            const text = await resp.text();
+                            return {status: resp.status, text: text.substring(0, 5000)};
                         }""", {"base": base, "courseIds": course_ids, "searchDate": search_date})
 
+                        if resp_text["status"] != 200:
+                            raise Exception(f"HTTP {resp_text['status']}: {resp_text['text'][:200]}")
+
+                        data = json.loads(resp_text["text"])
                         reservations = data.get("r06", [])
                         tee_times = []
                         for r in reservations:
