@@ -1840,7 +1840,7 @@ def _sync_to_supabase(all_results, active_courses):
             "moffett-field": {"name": "Moffett Field Golf Club", "region": "ca", "state": "CA", "city": "Mountain View", "booking_system": "golfnow", "scan_enabled": True, "booking_url": "https://moffettfielddaily.ezlinksgolf.com/index.html#/search"},
             "shoreline": {"name": "Shoreline Golf Links", "region": "ca", "state": "CA", "city": "Mountain View", "booking_system": "clubcaddie", "scan_enabled": True, "booking_url": "https://shoreline.clubcaddie.com"},
             # New Jersey
-            "galloping-hill": {"name": "Galloping Hill Golf Course", "region": "nj", "state": "NJ", "city": "Kenilworth", "booking_system": "ezlinks", "scan_enabled": True, "booking_url": "https://unioncountygolf.ezlinksgolf.com/index.html#/search"},
+            "galloping-hill": {"name": "Galloping Hill Golf Course", "region": "nj", "state": "NJ", "city": "Kenilworth", "booking_system": "ezlinks", "scan_enabled": False, "booking_url": "https://unioncountygolf.ezlinksgolf.com/index.html#/search"},
             "flanders-valley": {"name": "Flanders Valley Golf Course", "region": "nj", "state": "NJ", "city": "Flanders", "booking_system": "golfnow", "scan_enabled": True, "booking_url": "https://www.golfnow.com/tee-times/facility/5151-flanders-valley-golf-course-blue-to-white/search"},
             "neshanic-valley": {"name": "Neshanic Valley Golf Course", "region": "nj", "state": "NJ", "city": "Neshanic Station", "booking_system": "golfnow", "scan_enabled": True, "booking_url": "https://www.golfnow.com/tee-times/facility/7083-neshanic-valley-golf-course/search"},
             "rock-spring": {"name": "Rock Spring Golf Club", "region": "nj", "state": "NJ", "city": "West Orange", "booking_system": "golfnow", "scan_enabled": True, "booking_url": "https://www.golfnow.com/tee-times/facility/19083-rock-spring-golf-club-at-west-orange/search"},
@@ -1863,6 +1863,18 @@ def _sync_to_supabase(all_results, active_courses):
                         print(f"  Supabase: created course '{slug}' ({info['name']})")
                 except Exception as e:
                     print(f"  Supabase: failed to create course '{slug}': {e}")
+            else:
+                # Sync scan_enabled and booking_url for existing courses
+                updates = {}
+                if "scan_enabled" in info:
+                    updates["scan_enabled"] = info["scan_enabled"]
+                if "booking_url" in info:
+                    updates["booking_url"] = info["booking_url"]
+                if updates:
+                    try:
+                        sb.table("courses").update(updates).eq("slug", slug).execute()
+                    except Exception:
+                        pass
 
         print(f"\nSupabase: {len(slug_to_uuid)} courses in database")
 
