@@ -89,6 +89,8 @@ export default function RoundDetail() {
   const [confirming, setConfirming] = useState(false)
   const [availableTimes, setAvailableTimes] = useState<TeeTime[]>([])
   const [loadingTimes, setLoadingTimes] = useState(true)
+  const [collapsedCourses, setCollapsedCourses] = useState<Set<string>>(new Set())
+  const [startingWatch, setStartingWatch] = useState(false)
 
   // Edit state
   const [editing, setEditing] = useState(false)
@@ -290,6 +292,28 @@ export default function RoundDetail() {
     }
     setConfirming(false)
     setBookingTimeId(null)
+  }
+
+  const handleStartWatching = async () => {
+    if (!round) return
+    setStartingWatch(true)
+    const { error } = await supabase
+      .from('rounds')
+      .update({ status: 'watching', has_specific_time: false, matched_tee_time_id: null })
+      .eq('id', round.id)
+    if (!error) {
+      setRound(prev => prev ? { ...prev, status: 'watching', has_specific_time: false, matched_tee_time_id: null } : prev)
+    }
+    setStartingWatch(false)
+  }
+
+  const toggleCourseCollapse = (courseName: string) => {
+    setCollapsedCourses(prev => {
+      const next = new Set(prev)
+      if (next.has(courseName)) next.delete(courseName)
+      else next.add(courseName)
+      return next
+    })
   }
 
   // ── Edit handlers ──
@@ -769,14 +793,31 @@ export default function RoundDetail() {
                 Available Now
               </h2>
 
-              {courseGroups.map(([courseName, times]) => (
+              {courseGroups.map(([courseName, times]) => {
+                const isCollapsed = collapsedCourses.has(courseName)
+                return (
                 <div key={courseName} className="space-y-2">
                   {multiCourse && (
-                    <p className="text-xs font-body font-medium text-muted-foreground uppercase tracking-wide">
-                      {courseName}
-                    </p>
+                    <button
+                      onClick={() => toggleCourseCollapse(courseName)}
+                      className="flex items-center justify-between w-full text-left py-1"
+                    >
+                      <p className="text-xs font-body font-medium text-muted-foreground uppercase tracking-wide">
+                        {courseName}
+                      </p>
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-body text-muted-foreground/60">{times.length} times</span>
+                        <svg
+                          width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                          strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+                          className={`text-muted-foreground transition-transform ${isCollapsed ? '' : 'rotate-180'}`}
+                        >
+                          <polyline points="6 9 12 15 18 9" />
+                        </svg>
+                      </div>
+                    </button>
                   )}
-                  {times.map(tt => {
+                  {!isCollapsed && times.map(tt => {
                     const isBooking = bookingTimeId === tt.id
                     return (
                       <div
@@ -847,10 +888,32 @@ export default function RoundDetail() {
                     )
                   })}
                 </div>
-              ))}
+                )
+              })}
+
+              {/* Start Watching button */}
+              {isOrganizer && round.status === 'open' && (
+                <button
+                  onClick={handleStartWatching}
+                  disabled={startingWatch}
+                  className="w-full h-12 flex items-center justify-center gap-2 border border-primary/30 text-primary font-body font-semibold rounded-xl hover:bg-primary/5 transition-colors text-sm"
+                >
+                  {startingWatch ? 'Starting...' : (
+                    <>
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z" />
+                        <line x1="4" y1="22" x2="4" y2="15" />
+                      </svg>
+                      Skip These &middot; Start Watching
+                    </>
+                  )}
+                </button>
+              )}
 
               <p className="text-xs font-body text-muted-foreground text-center">
-                Or skip these and wait for something better
+                {round.status === 'watching'
+                  ? "We're watching and will notify you when a match is found"
+                  : "Pick a time above, or start watching to get notified"}
               </p>
             </section>
           ) : (
