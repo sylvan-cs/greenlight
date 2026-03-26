@@ -91,7 +91,7 @@ export default function StartRound() {
   const [allCourses, setAllCourses] = useState(draft.courseIds.length === 0)
   const [loadingCourses, setLoadingCourses] = useState(true)
   const hasFetchedCourses = useRef(false)
-  const [error, setError] = useState('')
+  const [error] = useState('')
 
   useEffect(() => {
     async function fetchCourses() {
