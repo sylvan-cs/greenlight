@@ -69,14 +69,14 @@ export default function StartRoundWho() {
   confirmParts.push(`${spots} player${spots !== 1 ? 's' : ''}`)
   const confirmText = confirmParts.filter(Boolean).join(' · ')
 
-  const handleSubmit = async () => {
+  const handleSubmit = async (forceWatch = false) => {
     if (!user) return
     setSubmitting(true)
     setError('')
 
     const shareCode = generateShareCode()
     const creatorName = user.user_metadata?.full_name ?? 'Unknown'
-    const hasSpecific = hasAvailability && !!selectedTime
+    const hasSpecific = !forceWatch && hasAvailability && !!selectedTime
 
     const { data: round, error: roundError } = await supabase
       .from('rounds')
@@ -90,7 +90,7 @@ export default function StartRoundWho() {
         specific_tee_time: hasSpecific ? selectedTime.tee_time : null,
         specific_course_id: hasSpecific ? selectedTime.course_id : null,
         share_code: shareCode,
-        status: 'open',
+        status: forceWatch ? 'watching' : 'open',
       })
       .select('*')
       .single() as unknown as { data: Round | null; error: { message: string } | null }
@@ -273,7 +273,7 @@ export default function StartRoundWho() {
 
       {/* ── Action Button ── */}
       <button
-        onClick={handleSubmit}
+        onClick={() => handleSubmit(false)}
         disabled={submitting || (hasAvailability && !selectedTimeId)}
         className="w-full h-14 flex items-center justify-center gap-2 bg-primary hover:bg-green-hover text-primary-foreground font-bold rounded-xl transition-colors disabled:opacity-30 disabled:cursor-not-allowed text-base font-body"
       >
@@ -299,9 +299,23 @@ export default function StartRoundWho() {
         )}
       </button>
 
+      {hasAvailability && (
+        <button
+          onClick={() => handleSubmit(true)}
+          disabled={submitting}
+          className="w-full h-11 flex items-center justify-center gap-2 border border-primary/30 text-primary font-body font-semibold rounded-xl hover:bg-primary/5 transition-colors text-sm disabled:opacity-30"
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z" />
+            <line x1="4" y1="22" x2="4" y2="15" />
+          </svg>
+          Skip These &middot; Start Watching
+        </button>
+      )}
+
       <p className="text-xs font-body text-muted-foreground text-center">
         {hasAvailability
-          ? "We'll create the round and send the invite link."
+          ? "Pick a time, or start watching to get notified of new openings."
           : "We'll notify you when a matching tee time opens up."}
       </p>
     </div>

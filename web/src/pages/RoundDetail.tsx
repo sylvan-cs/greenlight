@@ -504,6 +504,13 @@ export default function RoundDetail() {
   const courseGroups = Object.entries(groupedTimes)
   const multiCourse = courseGroups.length > 1
 
+  // Default all courses to collapsed when multiple courses
+  useEffect(() => {
+    if (multiCourse && collapsedCourses.size === 0 && courseGroups.length > 0) {
+      setCollapsedCourses(new Set(courseGroups.map(([name]) => name)))
+    }
+  }, [availableTimes.length]) // eslint-disable-line react-hooks/exhaustive-deps
+
   // For booked rounds, find the specific course
   const bookedCourse = round.has_specific_time && round.specific_course_id
     ? round.round_courses?.find(rc => rc.course_id === round.specific_course_id)?.courses
