@@ -221,6 +221,20 @@ export default function RoundDetail() {
     return () => clearInterval(interval)
   }, [round, fetchAvailableTimes])
 
+  // Default all courses to collapsed when multiple courses
+  useEffect(() => {
+    const grouped = availableTimes.reduce<Record<string, TeeTime[]>>((acc, tt) => {
+      const name = tt.courses?.name ?? 'Unknown'
+      if (!acc[name]) acc[name] = []
+      acc[name].push(tt)
+      return acc
+    }, {})
+    const groups = Object.entries(grouped)
+    if (groups.length > 1 && collapsedCourses.size === 0) {
+      setCollapsedCourses(new Set(groups.map(([name]) => name)))
+    }
+  }, [availableTimes.length]) // eslint-disable-line react-hooks/exhaustive-deps
+
   const handleCopy = async () => {
     if (!round) return
     const url = `${window.location.origin}/r/${round.share_code}`
@@ -503,13 +517,6 @@ export default function RoundDetail() {
   }, {})
   const courseGroups = Object.entries(groupedTimes)
   const multiCourse = courseGroups.length > 1
-
-  // Default all courses to collapsed when multiple courses
-  useEffect(() => {
-    if (multiCourse && collapsedCourses.size === 0 && courseGroups.length > 0) {
-      setCollapsedCourses(new Set(courseGroups.map(([name]) => name)))
-    }
-  }, [availableTimes.length]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // For booked rounds, find the specific course
   const bookedCourse = round.has_specific_time && round.specific_course_id
