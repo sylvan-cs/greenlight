@@ -31,6 +31,10 @@ export default function GroupDetail() {
         .eq('id', id!)
         .single() as unknown as { data: GroupWithMembers | null; error: any }
 
+      console.log('GroupDetail fetch:', { data, error })
+      if (data?.group_members) {
+        console.log('Members raw:', JSON.stringify(data.group_members, null, 2))
+      }
       if (!error && data) {
         setGroup(data)
         setNameInput(data.name)
