@@ -95,20 +95,33 @@ export default function Profile() {
     if (!user) return
     async function fetchGroups() {
       // Get group IDs the user is a member of
-      const { data: memberData } = await (supabase as any)
+      const { data: memberData, error: memErr } = await (supabase as any)
         .from('group_members')
         .select('group_id')
         .eq('user_id', user!.id)
+      console.log('fetchGroups memberData:', memberData, 'error:', memErr)
       if (!memberData || memberData.length === 0) {
         setGroupsLoading(false)
         return
       }
       const groupIds = memberData.map((m: any) => m.group_id)
-      const { data } = await (supabase as any)
+      // Fetch groups with members — try with profiles join first, fall back without
+      const { data, error: groupErr } = await (supabase as any)
         .from('groups')
-        .select('*, group_members(*, profiles(id, full_name, email))')
-        .in('id', groupIds) as unknown as { data: GroupWithMembers[] | null }
-      if (data) setGroups(data)
+        .select('*, group_members(id, group_id, user_id, role, joined_at, profiles:user_id(id, full_name, email))')
+        .in('id', groupIds) as unknown as { data: GroupWithMembers[] | null; error: any }
+      console.log('fetchGroups groups:', data, 'error:', groupErr)
+      if (groupErr) {
+        // Fallback: fetch without profiles join
+        const { data: fallback } = await (supabase as any)
+          .from('groups')
+          .select('*, group_members(*)')
+          .in('id', groupIds) as unknown as { data: GroupWithMembers[] | null }
+        console.log('fetchGroups fallback:', fallback)
+        if (fallback) setGroups(fallback)
+      } else if (data) {
+        setGroups(data)
+      }
       setGroupsLoading(false)
     }
     fetchGroups()
@@ -171,7 +184,7 @@ export default function Profile() {
         const groupIds = memberData.map((m: any) => m.group_id)
         const { data } = await (supabase as any)
           .from('groups')
-          .select('*, group_members(*, profiles(id, full_name, email))')
+          .select('*, group_members(id, group_id, user_id, role, joined_at, profiles:user_id(id, full_name, email))')
           .in('id', groupIds) as unknown as { data: GroupWithMembers[] | null }
         console.log('Refetch groups:', data)
         if (data) setGroups(data)

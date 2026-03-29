@@ -39,7 +39,7 @@ export default function InviteFromGroups({ selectedUsers, onSelectionChange, exi
       const groupIds = memberData.map((m: any) => m.group_id)
       const { data } = await (supabase as any)
         .from('groups')
-        .select('*, group_members(*, profiles(id, full_name, email))')
+        .select('*, group_members(id, group_id, user_id, role, joined_at, profiles:user_id(id, full_name, email))')
         .in('id', groupIds) as unknown as { data: GroupWithMembers[] | null }
       if (data) {
         setGroups(data)
