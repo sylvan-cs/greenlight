@@ -1,13 +1,14 @@
 import { useState, type FormEvent } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
 import { supabase } from '../lib/supabase'
 
 export default function SignUp() {
   const { signUp } = useAuth()
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
   const [fullName, setFullName] = useState('')
-  const [email, setEmail] = useState('')
+  const [email, setEmail] = useState(searchParams.get('email') ?? '')
   const [password, setPassword] = useState('')
   const [phone, setPhone] = useState('')
   const [smsOptIn, setSmsOptIn] = useState(false)
@@ -28,18 +29,32 @@ export default function SignUp() {
       return
     }
 
-    // Save notification preferences to profile
+    // Save notification preferences and searchable fields to profile
     if (userId) {
       const { error: prefErr } = await supabase.from('profiles').update({
         phone: phone.trim() || null,
         sms_opt_in: smsOptIn && !!phone.trim(),
         email_opt_in: emailOptIn,
+        full_name: fullName.trim(),
+        email: email.toLowerCase(),
       }).eq('id', userId)
-      // If opt-in columns don't exist yet, save phone only
+      // If new columns don't exist yet, save what we can
       if (prefErr) {
         await supabase.from('profiles').update({
           phone: phone.trim() || null,
         }).eq('id', userId)
+      }
+
+      // Link any anonymous RSVPs that match this email
+      const { data: linkedRsvps } = await supabase
+        .from('rsvps')
+        .update({ user_id: userId })
+        .eq('email', email.toLowerCase())
+        .is('user_id', null)
+        .select('round_id')
+
+      if (linkedRsvps && linkedRsvps.length > 0) {
+        localStorage.setItem('linked_rsvps', JSON.stringify(linkedRsvps.map(r => r.round_id)))
       }
     }
 

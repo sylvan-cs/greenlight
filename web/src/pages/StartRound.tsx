@@ -4,7 +4,8 @@ import { supabase } from '../lib/supabase'
 import { useAuth } from '../contexts/AuthContext'
 import { getDraft, updateDraft, computeTimeRange, DAY_PARTS, DAY_PART_META, type DayPart } from '../lib/roundStore'
 import { generateDateChips, formatTime } from '../lib/helpers'
-import type { Course } from '../lib/types'
+import InviteFriends from '../components/InviteFriends'
+import type { Course, ProfileSearchResult } from '../lib/types'
 
 const dateChips = generateDateChips()
 
@@ -91,6 +92,7 @@ export default function StartRound() {
   const [allCourses, setAllCourses] = useState(draft.courseIds.length === 0)
   const [loadingCourses, setLoadingCourses] = useState(true)
   const hasFetchedCourses = useRef(false)
+  const [invitedUsers, setInvitedUsers] = useState<ProfileSearchResult[]>(draft.invitedUsers)
   const [error] = useState('')
 
   useEffect(() => {
@@ -182,6 +184,7 @@ export default function StartRound() {
       timeEnd: timeRange.end,
       courseIds: Array.from(selectedCourseIds),
       spots,
+      invitedUsers,
     })
 
     navigate('/start/available')
@@ -416,6 +419,12 @@ export default function StartRound() {
           </div>
         )}
       </section>
+
+      {/* ── Invite Friends ── */}
+      <InviteFriends
+        selectedUsers={invitedUsers}
+        onSelectionChange={setInvitedUsers}
+      />
 
       {/* ── Confirm summary ── */}
       <section className="space-y-3">

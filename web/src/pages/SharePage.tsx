@@ -352,10 +352,10 @@ export default function SharePage() {
             Change response
           </button>
           <p className="text-xs font-body text-muted-foreground/60 pt-2">
-            Want to organize your own round?{' '}
-            <a href="/signup" className="text-primary/70 hover:text-primary transition-colors">
-              Create a free account &rarr;
-            </a>
+            <a href={`/signup${email ? `?email=${encodeURIComponent(email)}` : ''}`} className="text-primary/70 hover:text-primary transition-colors">
+              Create an account
+            </a>{' '}
+            to see this round in your app and get notified when a tee time is found.
           </p>
         </div>
       ) : isFull ? (

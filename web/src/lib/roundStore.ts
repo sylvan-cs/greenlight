@@ -8,6 +8,12 @@ export const DAY_PART_META: Record<DayPart, { label: string; start: string; end:
   afternoon: { label: 'Afternoon', start: '14:00', end: '18:00' },
 }
 
+export interface InvitedUser {
+  id: string
+  full_name: string
+  email: string
+}
+
 export interface RoundDraft {
   date: string
   dayParts: DayPart[]
@@ -16,6 +22,7 @@ export interface RoundDraft {
   timeEnd: string
   courseIds: string[]
   spots: number
+  invitedUsers: InvitedUser[]
 }
 
 /** Compute the combined start/end from selected day parts */
@@ -43,10 +50,11 @@ let draft: RoundDraft = {
   timeEnd: '10:00',
   courseIds: [],
   spots: 4,
+  invitedUsers: [],
 }
 
 export function getDraft(): RoundDraft {
-  return { ...draft, dayParts: [...draft.dayParts] }
+  return { ...draft, dayParts: [...draft.dayParts], invitedUsers: [...draft.invitedUsers] }
 }
 
 export function updateDraft(updates: Partial<RoundDraft>) {

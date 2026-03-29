@@ -10,6 +10,7 @@ export default function OnboardCourses() {
   const [isSaving, setIsSaving] = useState(false)
   const [saveError, setSaveError] = useState('')
   const [existingIds, setExistingIds] = useState<Set<string> | null>(null)
+  const hasLinkedRsvps = !!localStorage.getItem('linked_rsvps')
 
   // Load any previously saved courses so the UI stays in sync
   useEffect(() => {
@@ -68,7 +69,9 @@ export default function OnboardCourses() {
         <div className="space-y-2">
           <h1 className="text-4xl font-display tracking-tight">Your Courses</h1>
           <p className="text-sm font-body text-muted-foreground">
-            Pick the courses you play. You can always change these later.
+            {hasLinkedRsvps
+              ? 'Pick the courses you play, or skip for now \u2014 you have rounds waiting for you.'
+              : 'Pick the courses you play. You can always change these later.'}
           </p>
         </div>
 
@@ -82,6 +85,18 @@ export default function OnboardCourses() {
           saveLabel="Continue"
           isSaving={isSaving}
         />
+
+        {hasLinkedRsvps && (
+          <button
+            onClick={() => {
+              setNeedsOnboarding(false)
+              navigate('/home')
+            }}
+            className="w-full text-center text-sm font-body text-muted-foreground hover:text-foreground transition-colors py-2"
+          >
+            Skip for now
+          </button>
+        )}
       </div>
     </div>
   )

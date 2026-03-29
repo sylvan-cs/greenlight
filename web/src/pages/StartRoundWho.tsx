@@ -131,6 +131,28 @@ export default function StartRoundWho() {
       return
     }
 
+    // Insert invited user RSVPs
+    if (draft.invitedUsers.length > 0) {
+      const inviteInserts = draft.invitedUsers.map(u => ({
+        round_id: round.id,
+        user_id: u.id,
+        name: u.full_name,
+        email: u.email,
+        status: 'invited',
+      }))
+      await supabase.from('rsvps').insert(inviteInserts)
+
+      // Send invite notifications (fire-and-forget)
+      fetch('/api/notify-invite', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          roundId: round.id,
+          invitedUserIds: draft.invitedUsers.map(u => u.id),
+        }),
+      }).catch(() => {})
+    }
+
     resetDraft()
     navigate(`/round/${round.id}`)
   }

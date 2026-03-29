@@ -4,51 +4,15 @@ import { useAuth } from '../contexts/AuthContext'
 import { supabase } from '../lib/supabase'
 import { formatDateShort, formatTime } from '../lib/helpers'
 import { SmallAvatarRow, AvatarWithLabel } from '../components/Avatar'
-import type { RoundWithDetails } from '../lib/types'
+import Avatar from '../components/Avatar'
+import StatusBadge from '../components/StatusBadge'
+import type { RoundWithDetails, Rsvp } from '../lib/types'
 
 function getGreeting(): string {
   const hour = new Date().getHours()
   if (hour < 12) return 'Morning'
   if (hour < 17) return 'Afternoon'
   return 'Evening'
-}
-
-function StatusBadge({ status }: { status: string }) {
-  const config: Record<string, { text: string; className: string; pulse?: boolean }> = {
-    open: {
-      text: 'Gathering',
-      className: 'bg-amber-500/15 text-amber-500 border-amber-500/30',
-    },
-    watching: {
-      text: 'Watching',
-      className: 'bg-primary/15 text-primary border-primary/30',
-      pulse: true,
-    },
-    found: {
-      text: 'Time Found',
-      className: 'bg-primary/20 text-primary border-primary/40 font-semibold',
-    },
-    booked: {
-      text: 'Booked',
-      className: 'bg-primary text-primary-foreground border-primary',
-    },
-    cancelled: {
-      text: 'Cancelled',
-      className: 'bg-muted text-muted-foreground border-border',
-    },
-  }
-  const c = config[status] ?? config.watching
-  return (
-    <span className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-body font-medium border ${c.className}`}>
-      {c.pulse && (
-        <span className="relative flex h-2 w-2">
-          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-50" />
-          <span className="relative inline-flex rounded-full h-2 w-2 bg-primary" />
-        </span>
-      )}
-      {c.text}
-    </span>
-  )
 }
 
 function NextRoundCard({ round, onClick }: { round: RoundWithDetails; onClick: () => void }) {
@@ -159,10 +123,107 @@ function InProgressCard({ round, onClick }: { round: RoundWithDetails; onClick: 
   )
 }
 
+function InvitedRoundCard({
+  round,
+  userId,
+  onClick,
+  onRsvpChange,
+}: {
+  round: RoundWithDetails
+  userId: string
+  onClick: () => void
+  onRsvpChange: (rsvpId: string, status: 'in' | 'maybe' | 'out') => void
+}) {
+  const courseNames = round.round_courses?.map(rc => rc.courses?.name).filter(Boolean) ?? []
+  const rsvps = round.rsvps ?? []
+  const rsvpsIn = rsvps.filter(r => r.status === 'in')
+  const myRsvp = rsvps.find(r => r.user_id === userId)
+  const organizerName = rsvps[0]?.name?.split(' ')[0] ?? 'Someone'
+
+  const timeDisplay = round.has_specific_time && round.specific_tee_time
+    ? formatTime(round.specific_tee_time)
+    : `${formatTime(round.time_window_start)} \u2013 ${formatTime(round.time_window_end)}`
+
+  return (
+    <div className="bg-card border border-border rounded-2xl p-5 transition-all duration-150 hover:border-primary/30">
+      {/* Tappable header area */}
+      <button onClick={onClick} className="w-full text-left">
+        {/* Organizer */}
+        <div className="flex items-center gap-2 mb-2">
+          <Avatar name={rsvps[0]?.name ?? 'Someone'} confirmed size={24} />
+          <span className="text-xs font-body text-muted-foreground">
+            {organizerName} invited you
+          </span>
+        </div>
+
+        {/* Course name */}
+        {courseNames.length > 0 && (
+          <p className="font-display text-[15px] font-medium text-foreground mb-1">
+            {courseNames.join(' or ')}
+          </p>
+        )}
+
+        {/* Date / time */}
+        <p className="text-sm font-body text-muted-foreground mb-3">
+          {formatDateShort(round.round_date)} &middot; {timeDisplay}
+        </p>
+
+        {/* Avatar row + count */}
+        <div className="flex items-center justify-between mb-3">
+          <SmallAvatarRow
+            names={rsvps.map(r => ({ name: r.name, confirmed: r.status === 'in' }))}
+            total={round.spots_needed}
+          />
+          <span className="text-xs font-body text-muted-foreground">
+            {rsvpsIn.length} of {round.spots_needed} are in
+          </span>
+        </div>
+      </button>
+
+      {/* RSVP buttons */}
+      {myRsvp && (
+        <div className="flex gap-2">
+          <button
+            onClick={() => onRsvpChange(myRsvp.id, 'in')}
+            className={`flex-1 h-9 rounded-lg text-sm font-body font-semibold transition-all duration-150 active:scale-95 border ${
+              myRsvp.status === 'in'
+                ? 'bg-primary/15 text-primary border-primary/40'
+                : 'bg-transparent text-muted-foreground border-border hover:border-foreground/20'
+            }`}
+          >
+            I'm In
+          </button>
+          <button
+            onClick={() => onRsvpChange(myRsvp.id, 'maybe')}
+            className={`flex-1 h-9 rounded-lg text-sm font-body font-semibold transition-all duration-150 active:scale-95 border ${
+              myRsvp.status === 'maybe'
+                ? 'bg-amber-500/15 text-amber-500 border-amber-500/30'
+                : 'bg-transparent text-muted-foreground border-border hover:border-foreground/20'
+            }`}
+          >
+            Maybe
+          </button>
+          <button
+            onClick={() => onRsvpChange(myRsvp.id, 'out')}
+            className={`flex-1 h-9 rounded-lg text-sm font-body font-semibold transition-all duration-150 active:scale-95 border ${
+              myRsvp.status === 'out'
+                ? 'bg-destructive/15 text-destructive border-destructive/30'
+                : 'bg-transparent text-muted-foreground border-border hover:border-foreground/20'
+            }`}
+          >
+            Can't Go
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
+
 export default function Home() {
   const { user } = useAuth()
   const navigate = useNavigate()
   const [rounds, setRounds] = useState<RoundWithDetails[]>([])
+  const [invitedRounds, setInvitedRounds] = useState<RoundWithDetails[]>([])
   const [loading, setLoading] = useState(true)
   const [fetchError, setFetchError] = useState(false)
   const hasFetched = useRef(false)
@@ -173,6 +234,7 @@ export default function Home() {
     async function fetchRounds() {
       if (!user) return
 
+      // Fetch user's own rounds
       const { data, error } = await supabase
         .from('rounds')
         .select(`
@@ -188,6 +250,33 @@ export default function Home() {
       } else if (data) {
         setRounds(data as RoundWithDetails[])
       }
+
+      // Fetch rounds the user was invited to
+      const { data: rsvpData } = await supabase
+        .from('rsvps')
+        .select('round_id')
+        .eq('user_id', user.id)
+        .in('status', ['invited', 'in', 'maybe'])
+
+      if (rsvpData && rsvpData.length > 0) {
+        const roundIds = rsvpData.map(r => r.round_id)
+        const { data: invData } = await supabase
+          .from('rounds')
+          .select(`
+            *,
+            round_courses(*, courses(*)),
+            rsvps(*)
+          `)
+          .in('id', roundIds)
+          .neq('creator_id', user.id)
+          .neq('status', 'cancelled')
+          .order('round_date', { ascending: true })
+
+        if (invData) {
+          setInvitedRounds(invData as RoundWithDetails[])
+        }
+      }
+
       hasFetched.current = true
       setLoading(false)
     }
@@ -199,9 +288,54 @@ export default function Home() {
     fetchRounds()
   }, [user])
 
+  // Real-time subscription for invited rounds
+  useEffect(() => {
+    if (!user || invitedRounds.length === 0) return
+
+    const roundIds = invitedRounds.map(r => r.id)
+    const channels = roundIds.map(roundId =>
+      supabase
+        .channel(`home-invited-${roundId}`)
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'rsvps', filter: `round_id=eq.${roundId}` },
+          (payload) => {
+            if (payload.eventType === 'INSERT') {
+              setInvitedRounds(prev => prev.map(r =>
+                r.id === roundId ? { ...r, rsvps: [...r.rsvps, payload.new as Rsvp] } : r
+              ))
+            } else if (payload.eventType === 'UPDATE') {
+              setInvitedRounds(prev => prev.map(r =>
+                r.id === roundId ? {
+                  ...r,
+                  rsvps: r.rsvps.map(rsvp => rsvp.id === (payload.new as Rsvp).id ? payload.new as Rsvp : rsvp),
+                } : r
+              ))
+            }
+          }
+        )
+        .subscribe()
+    )
+
+    return () => {
+      channels.forEach(ch => supabase.removeChannel(ch))
+    }
+  }, [user, invitedRounds.length]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleInvitedRsvpChange = async (rsvpId: string, status: 'in' | 'maybe' | 'out') => {
+    // Optimistic update
+    setInvitedRounds(prev => prev.map(r => ({
+      ...r,
+      rsvps: r.rsvps.map(rsvp => rsvp.id === rsvpId ? { ...rsvp, status } : rsvp),
+    })))
+
+    await supabase.from('rsvps').update({ status }).eq('id', rsvpId)
+  }
+
   const activeRounds = rounds.filter(r => r.status !== 'cancelled')
   const nextRound = activeRounds.find(r => r.status === 'booked' || r.status === 'found') ?? activeRounds[0]
   const inProgressRounds = activeRounds.filter(r => r !== nextRound)
+  const hasContent = rounds.length > 0 || invitedRounds.length > 0
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -241,7 +375,7 @@ export default function Home() {
             Try again
           </button>
         </div>
-      ) : rounds.length === 0 ? (
+      ) : !hasContent ? (
         <div className="flex flex-col items-center text-center py-16">
           <div className="w-16 h-16 rounded-full bg-card border border-border flex items-center justify-center mb-4">
             <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="text-muted-foreground">
@@ -275,6 +409,26 @@ export default function Home() {
                     key={round.id}
                     round={round}
                     onClick={() => navigate(`/round/${round.id}`)}
+                  />
+                ))}
+              </div>
+            </section>
+          )}
+
+          {/* INVITED */}
+          {invitedRounds.length > 0 && (
+            <section className="space-y-2.5">
+              <h2 className="text-xs font-body font-semibold uppercase tracking-widest text-muted-foreground">
+                Invited
+              </h2>
+              <div className="flex flex-col gap-3">
+                {invitedRounds.map(round => (
+                  <InvitedRoundCard
+                    key={round.id}
+                    round={round}
+                    userId={user!.id}
+                    onClick={() => navigate(`/round/${round.id}`)}
+                    onRsvpChange={handleInvitedRsvpChange}
                   />
                 ))}
               </div>

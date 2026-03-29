@@ -36,7 +36,7 @@ export interface Rsvp {
   user_id: string | null
   name: string
   email: string | null
-  status: 'in' | 'maybe' | 'out'
+  status: 'in' | 'maybe' | 'out' | 'invited'
   created_at: string
 }
 
@@ -56,6 +56,12 @@ export interface UserCourse {
   course_id: string
   created_at: string
   courses?: Course
+}
+
+export interface ProfileSearchResult {
+  id: string
+  full_name: string
+  email: string
 }
 
 export interface RoundWithDetails extends Round {

@@ -5,45 +5,9 @@ import { useAuth } from '../contexts/AuthContext'
 import { formatDateShort, formatTime, getTimeWindowLabel, generateDateChips } from '../lib/helpers'
 import { DAY_PARTS, DAY_PART_META, computeTimeRange, type DayPart } from '../lib/roundStore'
 import Avatar from '../components/Avatar'
-import type { RoundWithDetails, Rsvp, TeeTime, Course } from '../lib/types'
-
-function StatusBadge({ status }: { status: string }) {
-  const config: Record<string, { text: string; className: string; pulse?: boolean }> = {
-    open: {
-      text: 'Gathering',
-      className: 'bg-amber-500/15 text-amber-500 border-amber-500/30',
-    },
-    watching: {
-      text: 'Watching',
-      className: 'bg-primary/15 text-primary border-primary/30',
-      pulse: true,
-    },
-    found: {
-      text: 'Time Found',
-      className: 'bg-primary/20 text-primary border-primary/40 font-semibold',
-    },
-    booked: {
-      text: 'Booked',
-      className: 'bg-primary text-primary-foreground border-primary',
-    },
-    cancelled: {
-      text: 'Cancelled',
-      className: 'bg-muted text-muted-foreground border-border',
-    },
-  }
-  const c = config[status] ?? config.watching
-  return (
-    <span className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-body font-medium border ${c.className}`}>
-      {c.pulse && (
-        <span className="relative flex h-2 w-2">
-          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-50" />
-          <span className="relative inline-flex rounded-full h-2 w-2 bg-primary" />
-        </span>
-      )}
-      {c.text}
-    </span>
-  )
-}
+import StatusBadge from '../components/StatusBadge'
+import InviteFriends from '../components/InviteFriends'
+import type { RoundWithDetails, Rsvp, TeeTime, Course, ProfileSearchResult } from '../lib/types'
 
 // Generate time options from 6:00 AM to 6:00 PM in 30-min increments
 const TIME_OPTIONS: { value: string; label: string }[] = []
@@ -990,11 +954,12 @@ export default function RoundDetail() {
             const isIn = rsvp.status === 'in'
             const isMaybe = rsvp.status === 'maybe'
             const isOut = rsvp.status === 'out'
+            const isInvited = rsvp.status === 'invited'
             return (
               <div
                 key={rsvp.id}
                 className={`flex items-center gap-3 py-3 px-3 rounded-lg transition-all duration-200 ${
-                  isOut ? 'opacity-40' : 'opacity-100'
+                  isOut ? 'opacity-40' : isInvited ? 'opacity-70' : 'opacity-100'
                 } ${isIn ? 'bg-primary/5' : ''}`}
               >
                 <Avatar name={rsvp.name} confirmed={isIn} size={40} />
@@ -1037,12 +1002,48 @@ export default function RoundDetail() {
                       <span className="text-destructive">Out</span>
                     </>
                   )}
+                  {isInvited && (
+                    <>
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-blue-400">
+                        <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z" />
+                        <polyline points="22,6 12,13 2,6" />
+                      </svg>
+                      <span className="text-blue-400">Invited</span>
+                    </>
+                  )}
                 </div>
               </div>
             )
           })}
         </div>
       </section>
+
+      {/* ── Invite Friends (organizer only) ── */}
+      {isOrganizer && round.status !== 'cancelled' && (
+        <InviteFriends
+          selectedUsers={[]}
+          onSelectionChange={(users) => {
+            // Immediately invite each new user
+            users.forEach(async (u) => {
+              const { error } = await supabase.from('rsvps').insert({
+                round_id: round.id,
+                user_id: u.id,
+                name: u.full_name,
+                email: u.email,
+                status: 'invited',
+              })
+              if (!error) {
+                fetch('/api/notify-invite', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ roundId: round.id, invitedUserIds: [u.id] }),
+                }).catch(() => {})
+              }
+            })
+          }}
+          existingUserIds={rsvps.filter(r => r.user_id).map(r => r.user_id!)}
+        />
+      )}
 
       {/* ── Cancel ── */}
       {round.status !== 'cancelled' && (
