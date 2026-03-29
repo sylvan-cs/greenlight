@@ -70,6 +70,7 @@ export default function RoundDetail() {
   const [loadingUserCourses, setLoadingUserCourses] = useState(false)
   const [saving, setSaving] = useState(false)
   const [editError, setEditError] = useState('')
+  const [togglingWatch, setTogglingWatch] = useState(false)
 
   // Restore booking-in-progress state from localStorage on mount/return
   useEffect(() => {
@@ -265,7 +266,7 @@ export default function RoundDetail() {
       fetch('/api/notify-booking', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ roundId: round.id }),
+        body: JSON.stringify({ roundId: round.id, bookerId: user?.id }),
       }).catch(() => {})
     }
     setConfirming(false)
@@ -913,6 +914,42 @@ export default function RoundDetail() {
           )}
         </>
       )}
+
+      {/* ── Co-watcher toggle (non-organizer, status 'in') ── */}
+      {!isOrganizer && round.status !== 'cancelled' && round.status !== 'booked' && (() => {
+        const myRsvp = rsvps.find(r => r.user_id === user?.id && r.status === 'in')
+        if (!myRsvp) return null
+        return (
+          <div className="bg-card border border-border rounded-2xl p-5 space-y-2">
+            <label className="flex items-start gap-2.5 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={myRsvp.is_watching ?? false}
+                disabled={togglingWatch}
+                onChange={async (e) => {
+                  const val = e.target.checked
+                  setTogglingWatch(true)
+                  await (supabase as any).from('rsvps').update({ is_watching: val }).eq('id', myRsvp.id)
+                  setRound(prev => prev ? {
+                    ...prev,
+                    rsvps: prev.rsvps.map(r => r.id === myRsvp.id ? { ...r, is_watching: val } : r),
+                  } : prev)
+                  setTogglingWatch(false)
+                }}
+                className="w-4 h-4 rounded border-border accent-primary mt-0.5"
+              />
+              <div>
+                <span className="text-sm font-body text-foreground font-medium">
+                  Watch for tee times
+                </span>
+                <p className="text-xs font-body text-muted-foreground mt-0.5">
+                  If we find a time, we'll notify you — and you can book it if the organizer hasn't yet.
+                </p>
+              </div>
+            </label>
+          </div>
+        )
+      })()}
 
       {/* ── Share Link ── */}
       <div className="bg-card border border-border rounded-2xl p-5 space-y-2">

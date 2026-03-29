@@ -1,12 +1,14 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { useParams } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
+import { useAuth } from '../contexts/AuthContext'
 import { formatDateLong, formatTime, formatDateShort, getInitials, getTimeWindowLabel } from '../lib/helpers'
 import Avatar from '../components/Avatar'
 import type { RoundWithDetails, Rsvp } from '../lib/types'
 
 export default function SharePage() {
   const { shareCode } = useParams<{ shareCode: string }>()
+  const { user } = useAuth()
   const [round, setRound] = useState<RoundWithDetails | null>(null)
   const [loading, setLoading] = useState(true)
   const [notFound, setNotFound] = useState(false)
@@ -19,6 +21,8 @@ export default function SharePage() {
   const [rsvpId, setRsvpId] = useState<string | null>(null)
   const [changingResponse, setChangingResponse] = useState(false)
   const [error, setError] = useState('')
+  const [isWatching, setIsWatching] = useState(false)
+  const [togglingWatch, setTogglingWatch] = useState(false)
 
   useEffect(() => {
     if (!shareCode) return
@@ -63,6 +67,7 @@ export default function SharePage() {
         setRsvpId(storedId)
         setName(storedName)
         setRsvpStatus(status)
+        setIsWatching(match.is_watching ?? false)
         setRsvpDone(true)
       } else {
         localStorage.removeItem(`rsvp_${shareCode}`)
@@ -342,6 +347,37 @@ export default function SharePage() {
               ? `${creatorName} will share the tee time once it's booked.`
               : `${creatorName} will see your response.`}
           </p>
+          {/* Co-watcher toggle */}
+          {rsvpStatus === 'in' && rsvpId && (
+            <div className="bg-card border border-border rounded-xl p-4 text-left space-y-2 mt-2">
+              <label className="flex items-start gap-2.5 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={isWatching}
+                  disabled={togglingWatch}
+                  onChange={async (e) => {
+                    const val = e.target.checked
+                    setTogglingWatch(true)
+                    setIsWatching(val)
+                    await (supabase as any).from('rsvps').update({ is_watching: val }).eq('id', rsvpId)
+                    setTogglingWatch(false)
+                  }}
+                  className="w-4 h-4 rounded border-border accent-primary mt-0.5"
+                />
+                <div>
+                  <span className="text-sm font-body text-foreground font-medium">
+                    Notify me and let me book
+                  </span>
+                  <p className="text-xs font-body text-muted-foreground mt-0.5">
+                    {user
+                      ? `If we find a time, we'll notify you \u2014 and you can book it if ${creatorName} hasn't yet.`
+                      : `Watch for tee times too? Create an account to enable booking.`}
+                  </p>
+                </div>
+              </label>
+            </div>
+          )}
+
           <button
             onClick={() => {
               setChangingResponse(true)

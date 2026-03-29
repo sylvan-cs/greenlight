@@ -8,7 +8,7 @@ export default async function handler(request: Request) {
     })
   }
 
-  const { roundId } = await request.json()
+  const { roundId, bookerId } = await request.json()
   if (!roundId) {
     return new Response(JSON.stringify({ error: 'Missing roundId' }), {
       status: 400,
@@ -32,6 +32,11 @@ export default async function handler(request: Request) {
     })
   }
 
+  const headers = {
+    apikey: supabaseKey,
+    Authorization: `Bearer ${supabaseKey}`,
+  }
+
   // Twilio env vars (optional — SMS skipped if not configured)
   const twilioSid = process.env.TWILIO_ACCOUNT_SID
   const twilioToken = process.env.TWILIO_AUTH_TOKEN
@@ -41,21 +46,41 @@ export default async function handler(request: Request) {
   // Fetch the round with courses and RSVPs
   const roundRes = await fetch(
     `${supabaseUrl}/rest/v1/rounds?id=eq.${roundId}&select=*,round_courses(*,courses(*)),rsvps(*)`,
-    {
-      headers: {
-        apikey: supabaseKey,
-        Authorization: `Bearer ${supabaseKey}`,
-      },
-    }
+    { headers }
   )
   const rounds = await roundRes.json()
   const round = rounds?.[0]
 
-  if (!round || round.status !== 'booked') {
-    return new Response(JSON.stringify({ error: 'Round not found or not booked' }), {
+  if (!round) {
+    return new Response(JSON.stringify({ error: 'Round not found' }), {
       status: 400,
       headers: { 'Content-Type': 'application/json' },
     })
+  }
+
+  // If round is already booked by someone else, return conflict
+  if (round.status === 'booked') {
+    return new Response(JSON.stringify({ error: 'Someone already booked this round' }), {
+      status: 409,
+      headers: { 'Content-Type': 'application/json' },
+    })
+  }
+
+  // Get booker's name
+  let bookerName = 'Your group organizer'
+  if (bookerId) {
+    const bookerRes = await fetch(
+      `${supabaseUrl}/rest/v1/profiles?id=eq.${bookerId}&select=full_name`,
+      { headers }
+    )
+    const bookers = await bookerRes.json()
+    if (bookers?.[0]?.full_name) {
+      bookerName = bookers[0].full_name.split(' ')[0]
+    }
+  } else {
+    // Fall back to organizer name
+    const organizerFullName = round.rsvps?.[0]?.name ?? 'Your group organizer'
+    bookerName = organizerFullName.split(' ')[0]
   }
 
   // Get course info
@@ -66,36 +91,29 @@ export default async function handler(request: Request) {
   const courseDisplay = courseName ?? 'the course'
   const bookingUrl = courseRecord?.booking_url ?? ''
 
-  // Format date (long form: "Sunday, March 22")
+  // Format date
   const date = new Date(round.round_date + 'T12:00:00')
   const dateLong = date.toLocaleDateString('en-US', {
     weekday: 'long',
     month: 'long',
     day: 'numeric',
   })
-  // Short date for subject line
   const dateStr = date.toLocaleDateString('en-US', {
     weekday: 'short',
     month: 'short',
     day: 'numeric',
   })
-  // Short date for booking link label (e.g. "Mar 22")
   const dateShort = date.toLocaleDateString('en-US', {
     month: 'short',
     day: 'numeric',
   })
 
-  // Format tee time: "08:30" → "8:30 AM"
+  // Format tee time
   const teeTime = round.specific_tee_time || round.time_window_start
   const [h, m] = teeTime.split(':').map(Number)
   const timeStr = `${h % 12 || 12}:${String(m).padStart(2, '0')} ${h < 12 ? 'AM' : 'PM'}`
 
-  // Player count
   const playerCount = round.spots_needed ?? 0
-
-  // Get organizer first name
-  const organizerFullName = round.rsvps?.[0]?.name ?? 'Your group organizer'
-  const organizerFirstName = organizerFullName.split(' ')[0]
 
   // Collect emails from RSVPs who are "in" and provided an email
   const recipients: string[] = (round.rsvps ?? [])
@@ -108,24 +126,20 @@ export default async function handler(request: Request) {
     })
   }
 
-  const subject = `You're on the tee — ${courseDisplay} on ${dateStr}`
+  const subject = `\u2705 ${bookerName} locked it in \u2014 ${courseDisplay} on ${dateStr}`
 
-  const bodyLines = [
-    `${organizerFirstName} locked in a tee time.`,
+  const body = [
+    `\u2705 ${bookerName} locked it in.`,
     '',
-    courseDisplay,
-    `${dateLong} at ${timeStr}`,
+    `${courseDisplay} \u00b7 ${dateLong} \u00b7 ${timeStr}`,
     `${playerCount} players`,
-  ]
-
-  if (bookingUrl) {
-    bodyLines.push('', bookingUrl)
-    bodyLines.push(`→ Select ${dateShort} · ${playerCount} players · ${timeStr}`)
-  }
-
-  bodyLines.push('', 'See you out there.', '— The Starter')
-
-  const body = bodyLines.join('\n')
+    '',
+    bookingUrl ? `Book: ${bookingUrl}` : '',
+    bookingUrl ? `\u2192 Select ${dateShort} \u00b7 ${playerCount} players \u00b7 ${timeStr}` : '',
+    '',
+    'See you out there.',
+    '\u2014 The Starter',
+  ].filter(Boolean).join('\n')
 
   let sent = 0
   for (const to of recipients) {
@@ -154,21 +168,15 @@ export default async function handler(request: Request) {
   if (twilioConfigured) {
     const twilioUrl = `https://api.twilio.com/2010-04-01/Accounts/${twilioSid}/Messages.json`
     const twilioAuth = btoa(`${twilioSid}:${twilioToken}`)
-    const smsBody = `✅ Locked in: ${timeStr} at ${courseDisplay} on ${dateLong}. See you out there.\n- The Starter`
+    const smsBody = `\u2705 ${bookerName} locked it in. ${timeStr} at ${courseDisplay} on ${dateLong}. See you out there.\n\u2014 The Starter`
 
     const inRsvps = (round.rsvps ?? []).filter((r: any) => r.status === 'in' && r.user_id)
 
     for (const rsvp of inRsvps) {
       try {
-        // Fetch user profile to check sms_opt_in and phone
         const profileRes = await fetch(
           `${supabaseUrl}/rest/v1/profiles?id=eq.${rsvp.user_id}&select=phone,sms_opt_in`,
-          {
-            headers: {
-              apikey: supabaseKey,
-              Authorization: `Bearer ${supabaseKey}`,
-            },
-          }
+          { headers }
         )
         const profiles = await profileRes.json()
         const profile = profiles?.[0]

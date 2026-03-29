@@ -2158,6 +2158,7 @@ def _send_sms(twilio_sid, twilio_token, twilio_phone, to_phone, message):
 
 
 def _send_match_email(to_email, suggestions, round_id,
+                      extra_line="",
                       from_email="The Starter <teetimes@thestarter.golf>"):
     """Send match notification email with up to 3 ranked suggestions via Resend."""
     api_key = os.environ.get("RESEND_API_KEY", "")
@@ -2170,6 +2171,8 @@ def _send_match_email(to_email, suggestions, round_id,
     subject = f"\u26f3 Tee time found! {best['time_display']} at {best['course_name']}"
 
     lines = ["\u26f3 Tee time found for your round!\n"]
+    if extra_line:
+        lines.append(extra_line + "\n")
     for i, s in enumerate(suggestions):
         if i > 0:
             lines.append("---\n")
@@ -2218,6 +2221,7 @@ def _send_match_email(to_email, suggestions, round_id,
 
 def _send_rsvp_email(to_email, creator_name, suggestions,
                      share_code,
+                     extra_line="",
                      from_email="The Starter <teetimes@thestarter.golf>"):
     """Send RSVP notification email via Resend."""
     api_key = os.environ.get("RESEND_API_KEY", "")
@@ -2230,6 +2234,8 @@ def _send_rsvp_email(to_email, creator_name, suggestions,
     share_link = f"https://thestarter.golf/r/{share_code}"
 
     lines = [f"\u26f3 {creator_name} found a tee time!\n"]
+    if extra_line:
+        lines.append(extra_line + "\n")
     for i, s in enumerate(suggestions):
         if i > 0:
             lines.append("---\n")
@@ -2297,11 +2303,11 @@ def _check_round_matches():
 
         today = datetime.now().strftime("%Y-%m-%d")
 
-        # Query open watching rounds (no match yet, not past)
+        # Query open/watching rounds (no match yet, not past)
         rounds_resp = (
             sb.table("rounds")
             .select("*")
-            .eq("status", "open")
+            .in_("status", ["open", "watching"])
             .eq("has_specific_time", False)
             .gte("round_date", today)
             .is_("matched_tee_time_id", "null")
@@ -2518,7 +2524,25 @@ def _check_round_matches():
                     "players": str(spots_needed),
                 })
 
-            # Notify creator — email + SMS
+            # Fetch all RSVPs with status='in' (includes co-watchers)
+            rsvp_resp = (
+                sb.table("rsvps")
+                .select("user_id, name, is_watching")
+                .eq("round_id", round_id)
+                .eq("status", "in")
+                .execute()
+            )
+            all_in_rsvps = rsvp_resp.data or []
+            creator_name = (creator.get("full_name") or "Someone") if creator else "Someone"
+            creator_first = creator_name.split(" ")[0]
+
+            # Count co-watchers (excluding creator)
+            co_watchers = [r for r in all_in_rsvps if r.get("is_watching") and r.get("user_id") != round_data["creator_id"]]
+            watcher_count = len(co_watchers)
+
+            best_s = email_suggestions[0]
+
+            # --- Notify creator (always) ---
             creator_email = None
             try:
                 user_resp = sb.auth.admin.get_user_by_id(round_data["creator_id"])
@@ -2526,46 +2550,28 @@ def _check_round_matches():
             except Exception as e:
                 print(f"    Could not get creator email: {e}")
 
-            creator_notified_email = False
             if creator_email and (not creator or creator.get("email_opt_in", True)):
-                creator_notified_email = _send_match_email(
+                watcher_line = f"{watcher_count} of your group {'is' if watcher_count == 1 else 'are'} also watching." if watcher_count > 0 else ""
+                _send_match_email(
                     creator_email, email_suggestions, round_id,
+                    extra_line=watcher_line,
                     from_email=from_email,
                 )
 
-            # SMS to creator (send alongside email, not just as fallback)
+            # SMS to creator
             if creator and creator.get("phone") and creator.get("sms_opt_in") and twilio_sid and twilio_token and twilio_phone and sms_sent < MAX_SMS_PER_CYCLE:
-                best_s = email_suggestions[0]
-                if best_s["match_type"] == "exact":
-                    sms_msg = (
-                        f"\u26f3 {best_s['time_display']} at {best_s['course_name']} on {date_display}"
-                        f" \u2014 {best_s['spots_display'] or '?'} spots\n"
-                        f"Book: {best_s['booking_url']}\n"
-                        f"- The Starter"
-                    )
-                else:
-                    context_str = best_s['match_label']
-                    sms_msg = (
-                        f"\u26f3 {best_s['time_display']} at {best_s['course_name']}"
-                        f" ({context_str}) on {date_display}\n"
-                        f"Book: {best_s['booking_url']}\n"
-                        f"- The Starter"
-                    )
+                sms_msg = (
+                    f"\u26f3 {best_s['time_display']} at {best_s['course_name']} on {date_display}"
+                    f" \u2014 {best_s['spots_display'] or '?'} spots\n"
+                )
+                if watcher_count > 0:
+                    sms_msg += f"{watcher_count} of your group {'is' if watcher_count == 1 else 'are'} also watching.\n"
+                sms_msg += f"Book: {best_s['booking_url']}\n- The Starter"
                 if _send_sms(twilio_sid, twilio_token, twilio_phone, creator["phone"], sms_msg):
                     sms_sent += 1
 
-            # Notify RSVPs
-            rsvp_resp = (
-                sb.table("rsvps")
-                .select("user_id, name")
-                .eq("round_id", round_id)
-                .eq("status", "in")
-                .execute()
-            )
-
-            creator_name = (creator.get("full_name") or "Someone") if creator else "Someone"
-
-            for rsvp in (rsvp_resp.data or []):
+            # --- Notify co-watchers (is_watching=true, status='in') ---
+            for rsvp in co_watchers:
                 if not rsvp.get("user_id"):
                     continue
 
@@ -2589,34 +2595,59 @@ def _check_round_matches():
                 except Exception:
                     pass
 
-                # Send email
+                # Email co-watcher with booking link
                 if rsvp_email and (not rsvp_profile or rsvp_profile.get("email_opt_in", True)):
                     _send_rsvp_email(
-                        rsvp_email, creator_name, email_suggestions,
+                        rsvp_email, creator_first, email_suggestions,
                         round_data["share_code"],
+                        extra_line=f"{creator_first} is watching too \u2014 first to book gets it.",
                         from_email=from_email,
                     )
 
-                # Send SMS alongside email
+                # SMS to co-watcher
                 if twilio_sid and twilio_token and twilio_phone and sms_sent < MAX_SMS_PER_CYCLE:
                     if rsvp_profile and rsvp_profile.get("phone") and rsvp_profile.get("sms_opt_in"):
-                        best_s = email_suggestions[0]
-                        if best_s["match_type"] == "exact":
-                            rsvp_sms = (
-                                f"\u26f3 {best_s['time_display']} at {best_s['course_name']} on {date_display}"
-                                f" \u2014 {best_s['spots_display'] or '?'} spots\n"
-                                f"Book: {best_s['booking_url']}\n"
-                                f"- The Starter"
-                            )
-                        else:
-                            rsvp_sms = (
-                                f"\u26f3 {best_s['time_display']} at {best_s['course_name']}"
-                                f" ({best_s['match_label']}) on {date_display}\n"
-                                f"Book: {best_s['booking_url']}\n"
-                                f"- The Starter"
-                            )
+                        rsvp_sms = (
+                            f"\u26f3 {best_s['time_display']} at {best_s['course_name']} on {date_display}"
+                            f" \u2014 {best_s['spots_display'] or '?'} spots\n"
+                            f"{creator_first} is watching too \u2014 first to book gets it.\n"
+                            f"Book: {best_s['booking_url']}\n- The Starter"
+                        )
                         if _send_sms(twilio_sid, twilio_token, twilio_phone, rsvp_profile["phone"], rsvp_sms):
                             sms_sent += 1
+
+            # --- Notify non-watcher RSVPs (status='in', not watching) ---
+            non_watchers = [r for r in all_in_rsvps if not r.get("is_watching") and r.get("user_id") != round_data["creator_id"]]
+            for rsvp in non_watchers:
+                if not rsvp.get("user_id"):
+                    continue
+
+                rsvp_profile = None
+                try:
+                    rsvp_profile_resp = (
+                        sb.table("profiles")
+                        .select("phone, sms_opt_in, email_opt_in")
+                        .eq("id", rsvp["user_id"])
+                        .single()
+                        .execute()
+                    )
+                    rsvp_profile = rsvp_profile_resp.data
+                except Exception:
+                    pass
+
+                rsvp_email = None
+                try:
+                    rsvp_user_resp = sb.auth.admin.get_user_by_id(rsvp["user_id"])
+                    rsvp_email = rsvp_user_resp.user.email if rsvp_user_resp and rsvp_user_resp.user else None
+                except Exception:
+                    pass
+
+                if rsvp_email and (not rsvp_profile or rsvp_profile.get("email_opt_in", True)):
+                    _send_rsvp_email(
+                        rsvp_email, creator_first, email_suggestions,
+                        round_data["share_code"],
+                        from_email=from_email,
+                    )
 
         print(f"  Matching complete. {sms_sent} SMS sent this cycle.")
 

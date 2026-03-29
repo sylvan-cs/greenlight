@@ -37,6 +37,7 @@ export interface Rsvp {
   name: string
   email: string | null
   status: 'in' | 'maybe' | 'out' | 'invited'
+  is_watching: boolean
   created_at: string
 }
 
