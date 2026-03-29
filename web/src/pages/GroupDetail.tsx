@@ -100,12 +100,15 @@ export default function GroupDetail() {
       .from('group_members')
       .delete()
       .eq('group_id', group.id)
-    console.log('Delete members error:', memDelErr)
     const { error: grpDelErr } = await (supabase as any)
       .from('groups')
       .delete()
       .eq('id', group.id)
-    console.log('Delete group error:', grpDelErr)
+    if (memDelErr || grpDelErr) {
+      alert(`Delete failed.\nMembers: ${memDelErr?.message ?? 'ok'}\nGroup: ${grpDelErr?.message ?? 'ok'}`)
+      setDeleting(false)
+      return
+    }
     navigate('/profile')
   }
 
