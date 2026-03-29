@@ -95,20 +95,11 @@ export default function GroupDetail() {
   const handleDelete = async () => {
     if (!group) return
     setDeleting(true)
-    // Always delete members first, then group (avoids FK constraint issues)
-    const { error: memDelErr } = await (supabase as any)
-      .from('group_members')
-      .delete()
-      .eq('group_id', group.id)
-    const { error: grpDelErr } = await (supabase as any)
-      .from('groups')
-      .delete()
-      .eq('id', group.id)
-    if (memDelErr || grpDelErr) {
-      alert(`Delete failed.\nMembers: ${memDelErr?.message ?? 'ok'}\nGroup: ${grpDelErr?.message ?? 'ok'}`)
-      setDeleting(false)
-      return
-    }
+    // Delete members first, then group (avoids FK constraint issues)
+    await (supabase as any).from('group_members').delete().eq('group_id', group.id)
+    await (supabase as any).from('groups').delete().eq('id', group.id)
+    // Small delay to let Supabase commit before Profile refetches
+    await new Promise(r => setTimeout(r, 300))
     navigate('/profile')
   }
 
