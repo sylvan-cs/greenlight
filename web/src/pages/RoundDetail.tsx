@@ -6,7 +6,7 @@ import { formatDateShort, formatTime, getTimeWindowLabel, generateDateChips } fr
 import { DAY_PARTS, DAY_PART_META, computeTimeRange, type DayPart } from '../lib/roundStore'
 import Avatar from '../components/Avatar'
 import StatusBadge from '../components/StatusBadge'
-import InviteFriends from '../components/InviteFriends'
+import InviteFromGroups from '../components/InviteFromGroups'
 import type { RoundWithDetails, Rsvp, TeeTime, Course } from '../lib/types'
 
 // Generate time options from 6:00 AM to 6:00 PM in 30-min increments
@@ -1020,7 +1020,7 @@ export default function RoundDetail() {
 
       {/* ── Invite Friends (organizer only) ── */}
       {isOrganizer && round.status !== 'cancelled' && (
-        <InviteFriends
+        <InviteFromGroups
           selectedUsers={[]}
           onSelectionChange={(users) => {
             // Immediately invite each new user

@@ -4,7 +4,7 @@ import { supabase } from '../lib/supabase'
 import { useAuth } from '../contexts/AuthContext'
 import { getDraft, updateDraft, computeTimeRange, DAY_PARTS, DAY_PART_META, type DayPart } from '../lib/roundStore'
 import { generateDateChips, formatTime } from '../lib/helpers'
-import InviteFriends from '../components/InviteFriends'
+import InviteFromGroups from '../components/InviteFromGroups'
 import type { Course, ProfileSearchResult } from '../lib/types'
 
 const dateChips = generateDateChips()
@@ -421,7 +421,7 @@ export default function StartRound() {
       </section>
 
       {/* ── Invite Friends ── */}
-      <InviteFriends
+      <InviteFromGroups
         selectedUsers={invitedUsers}
         onSelectionChange={setInvitedUsers}
       />

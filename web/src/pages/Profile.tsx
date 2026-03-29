@@ -1,9 +1,11 @@
 import { useState, useEffect } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
 import { getInitials } from '../lib/helpers'
 import { supabase } from '../lib/supabase'
 import CourseSelector from '../components/CourseSelector'
-import type { Course } from '../lib/types'
+import Avatar from '../components/Avatar'
+import type { Course, GroupWithMembers } from '../lib/types'
 
 function formatPhoneNumber(value: string): string {
   const digits = value.replace(/\D/g, '')
@@ -21,6 +23,7 @@ function isValidPhone(value: string): boolean {
 
 export default function Profile() {
   const { user, signOut } = useAuth()
+  const navigate = useNavigate()
   const [phone, setPhone] = useState('')
   const [smsOptIn, setSmsOptIn] = useState(false)
   const [emailOptIn, setEmailOptIn] = useState(true)
@@ -34,6 +37,12 @@ export default function Profile() {
   const [userCourses, setUserCourses] = useState<Course[]>([])
   const [editingCourses, setEditingCourses] = useState(false)
   const [savingCourses, setSavingCourses] = useState(false)
+  const [groups, setGroups] = useState<GroupWithMembers[]>([])
+  const [groupsLoading, setGroupsLoading] = useState(true)
+  const [showCreateGroup, setShowCreateGroup] = useState(false)
+  const [newGroupName, setNewGroupName] = useState('')
+  const [creatingGroup, setCreatingGroup] = useState(false)
+  const [copiedGroupId, setCopiedGroupId] = useState<string | null>(null)
 
   const fullName = user?.user_metadata?.full_name ?? 'User'
   const email = user?.email ?? ''
@@ -82,6 +91,29 @@ export default function Profile() {
       })
   }, [user])
 
+  useEffect(() => {
+    if (!user) return
+    async function fetchGroups() {
+      // Get group IDs the user is a member of
+      const { data: memberData } = await supabase
+        .from('group_members')
+        .select('group_id')
+        .eq('user_id', user!.id)
+      if (!memberData || memberData.length === 0) {
+        setGroupsLoading(false)
+        return
+      }
+      const groupIds = memberData.map(m => m.group_id)
+      const { data } = await supabase
+        .from('groups')
+        .select('*, group_members(*, profiles(id, full_name, email))')
+        .in('id', groupIds) as unknown as { data: GroupWithMembers[] | null }
+      if (data) setGroups(data)
+      setGroupsLoading(false)
+    }
+    fetchGroups()
+  }, [user])
+
   const saveCoursesEdit = async (selectedIds: Set<string>) => {
     if (!user) return
     setSavingCourses(true)
@@ -104,6 +136,48 @@ export default function Profile() {
 
     setEditingCourses(false)
     setSavingCourses(false)
+  }
+
+  const handleCreateGroup = async () => {
+    if (!user || !newGroupName.trim()) return
+    setCreatingGroup(true)
+    const { data: group, error } = await supabase
+      .from('groups')
+      .insert({ name: newGroupName.trim(), created_by: user.id })
+      .select('*')
+      .single()
+
+    if (!error && group) {
+      // Add creator as owner member
+      await supabase.from('group_members').insert({
+        group_id: group.id,
+        user_id: user.id,
+        role: 'owner',
+      })
+      // Refetch groups
+      const { data: memberData } = await supabase
+        .from('group_members')
+        .select('group_id')
+        .eq('user_id', user.id)
+      if (memberData) {
+        const groupIds = memberData.map(m => m.group_id)
+        const { data } = await supabase
+          .from('groups')
+          .select('*, group_members(*, profiles(id, full_name, email))')
+          .in('id', groupIds) as unknown as { data: GroupWithMembers[] | null }
+        if (data) setGroups(data)
+      }
+    }
+    setNewGroupName('')
+    setShowCreateGroup(false)
+    setCreatingGroup(false)
+  }
+
+  const handleCopyGroupInvite = async (group: GroupWithMembers) => {
+    const url = `${window.location.origin}/join/${group.invite_code}`
+    await navigator.clipboard.writeText(url)
+    setCopiedGroupId(group.id)
+    setTimeout(() => setCopiedGroupId(null), 2000)
   }
 
   const savePhone = async () => {
@@ -330,6 +404,117 @@ export default function Profile() {
                 {course.name}
               </span>
             ))}
+          </div>
+        )}
+      </section>
+
+      <hr className="border-border/40" />
+
+      {/* My Groups */}
+      <section className="space-y-3">
+        <div className="flex items-center justify-between">
+          <h2 className="text-xs font-body font-semibold uppercase tracking-widest text-muted-foreground">
+            My Groups
+          </h2>
+          <button
+            onClick={() => setShowCreateGroup(true)}
+            className="text-xs font-body font-medium text-primary hover:underline"
+          >
+            + Create
+          </button>
+        </div>
+
+        {/* Create group modal */}
+        {showCreateGroup && (
+          <div className="bg-card border border-border rounded-2xl p-5 space-y-3">
+            <h3 className="font-display text-lg">Create a Group</h3>
+            <input
+              type="text"
+              value={newGroupName}
+              onChange={e => setNewGroupName(e.target.value)}
+              placeholder="Group name (e.g. Saturday Crew)"
+              className="w-full h-12 px-4 bg-background border border-border rounded-xl text-foreground font-body placeholder-muted-foreground focus:outline-none focus:border-primary transition-colors"
+              autoFocus
+            />
+            <div className="flex gap-2">
+              <button
+                onClick={handleCreateGroup}
+                disabled={creatingGroup || !newGroupName.trim()}
+                className="flex-1 h-10 bg-primary hover:bg-green-hover text-primary-foreground font-bold rounded-xl text-sm font-body disabled:opacity-50"
+              >
+                {creatingGroup ? 'Creating...' : 'Create'}
+              </button>
+              <button
+                onClick={() => { setShowCreateGroup(false); setNewGroupName('') }}
+                className="flex-1 h-10 border border-border text-foreground font-semibold rounded-xl text-sm font-body"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
+
+        {groupsLoading ? (
+          <div className="space-y-2">
+            <div className="skeleton h-16 w-full rounded-2xl" />
+            <div className="skeleton h-16 w-full rounded-2xl" />
+          </div>
+        ) : groups.length === 0 && !showCreateGroup ? (
+          <p className="text-sm font-body text-muted-foreground">
+            No groups yet. Create one to easily invite your crew to rounds.
+          </p>
+        ) : (
+          <div className="flex flex-col gap-2">
+            {groups.map(group => {
+              const members = group.group_members ?? []
+              return (
+                <div
+                  key={group.id}
+                  className="bg-card border border-border rounded-2xl p-4 transition-all duration-150 hover:border-primary/30"
+                >
+                  <button
+                    onClick={() => navigate(`/group/${group.id}`)}
+                    className="w-full text-left"
+                  >
+                    <div className="flex items-center justify-between mb-2">
+                      <p className="font-display text-[15px] font-medium text-foreground">
+                        {group.name}
+                      </p>
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-muted-foreground">
+                        <polyline points="9 18 15 12 9 6" />
+                      </svg>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-1">
+                        {members.slice(0, 5).map((m, i) => (
+                          <Avatar key={i} name={m.profiles?.full_name ?? '?'} size={24} />
+                        ))}
+                        {members.length > 5 && (
+                          <span className="text-xs font-body text-muted-foreground ml-1">
+                            +{members.length - 5}
+                          </span>
+                        )}
+                      </div>
+                      <span className="text-xs font-body text-muted-foreground">
+                        {members.length} member{members.length !== 1 ? 's' : ''}
+                      </span>
+                    </div>
+                  </button>
+                  <div className="mt-2 pt-2 border-t border-border/40">
+                    <button
+                      onClick={(e) => { e.stopPropagation(); handleCopyGroupInvite(group) }}
+                      className="text-xs font-body font-medium text-primary hover:underline flex items-center gap-1"
+                    >
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+                        <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
+                      </svg>
+                      {copiedGroupId === group.id ? 'Copied!' : 'Copy invite link'}
+                    </button>
+                  </div>
+                </div>
+              )
+            })}
           </div>
         )}
       </section>

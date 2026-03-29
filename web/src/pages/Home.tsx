@@ -227,6 +227,8 @@ export default function Home() {
   const [loading, setLoading] = useState(true)
   const [fetchError, setFetchError] = useState(false)
   const hasFetched = useRef(false)
+  const [groupPrompt, setGroupPrompt] = useState<{ organizerName: string; organizerId: string } | null>(null)
+  const [creatingGroupFromPrompt, setCreatingGroupFromPrompt] = useState(false)
 
   const firstName = user?.user_metadata?.full_name?.split(' ')[0] ?? 'Golfer'
 
@@ -275,6 +277,41 @@ export default function Home() {
         if (invData) {
           setInvitedRounds(invData as RoundWithDetails[])
         }
+      }
+
+      // Check for group prompt (post-signup from share link)
+      const linkedRsvps = localStorage.getItem('linked_rsvps')
+      if (linkedRsvps) {
+        try {
+          const roundIds = JSON.parse(linkedRsvps) as string[]
+          if (roundIds.length > 0) {
+            const { data: roundData } = await supabase
+              .from('rounds')
+              .select('creator_id, rsvps(name, user_id)')
+              .eq('id', roundIds[0])
+              .single()
+            if (roundData && roundData.creator_id !== user.id) {
+              const organizer = (roundData.rsvps as any[])?.find((r: any) => r.user_id === roundData.creator_id)
+              if (organizer) {
+                setGroupPrompt({
+                  organizerName: organizer.name,
+                  organizerId: roundData.creator_id,
+                })
+              }
+            }
+          }
+        } catch {
+          // ignore
+        }
+        localStorage.removeItem('linked_rsvps')
+      }
+
+      // Check for pending group invite (from join page → signup flow)
+      const pendingInvite = localStorage.getItem('pending_group_invite')
+      if (pendingInvite) {
+        localStorage.removeItem('pending_group_invite')
+        navigate(`/join/${pendingInvite}`)
+        return
       }
 
       hasFetched.current = true
@@ -332,6 +369,30 @@ export default function Home() {
     await supabase.from('rsvps').update({ status }).eq('id', rsvpId)
   }
 
+  const handleCreateGroupWithOrganizer = async () => {
+    if (!user || !groupPrompt) return
+    setCreatingGroupFromPrompt(true)
+    const organizerFirst = groupPrompt.organizerName.split(' ')[0]
+    const myFirst = user.user_metadata?.full_name?.split(' ')[0] ?? 'Me'
+    const groupName = `${organizerFirst} & ${myFirst}`
+
+    const { data: group } = await supabase
+      .from('groups')
+      .insert({ name: groupName, created_by: user.id })
+      .select('*')
+      .single()
+
+    if (group) {
+      // Add both users as members
+      await supabase.from('group_members').insert([
+        { group_id: group.id, user_id: user.id, role: 'owner' },
+        { group_id: group.id, user_id: groupPrompt.organizerId, role: 'member' },
+      ])
+    }
+    setGroupPrompt(null)
+    setCreatingGroupFromPrompt(false)
+  }
+
   const activeRounds = rounds.filter(r => r.status !== 'cancelled')
   const nextRound = activeRounds.find(r => r.status === 'booked' || r.status === 'found') ?? activeRounds[0]
   const inProgressRounds = activeRounds.filter(r => r !== nextRound)
@@ -351,6 +412,34 @@ export default function Home() {
       >
         + Start a Round
       </button>
+
+      {/* Group prompt for new signups from share link */}
+      {groupPrompt && (
+        <div className="bg-card border border-primary/30 rounded-2xl p-5 space-y-3">
+          <p className="text-sm font-body text-foreground">
+            <span className="font-semibold">{groupPrompt.organizerName.split(' ')[0]}</span> invited you to a round. Add them to a group to make future rounds easier.
+          </p>
+          <div className="flex gap-2">
+            <button
+              onClick={handleCreateGroupWithOrganizer}
+              disabled={creatingGroupFromPrompt}
+              className="flex-1 h-10 bg-primary hover:bg-green-hover text-primary-foreground font-bold rounded-xl text-sm font-body disabled:opacity-50"
+            >
+              {creatingGroupFromPrompt ? 'Creating...' : `Create a group with ${groupPrompt.organizerName.split(' ')[0]}`}
+            </button>
+            <button
+              onClick={() => setGroupPrompt(null)}
+              className="h-10 px-3 text-muted-foreground hover:text-foreground transition-colors"
+              aria-label="Dismiss"
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <line x1="18" y1="6" x2="6" y2="18" />
+                <line x1="6" y1="6" x2="18" y2="18" />
+              </svg>
+            </button>
+          </div>
+        </div>
+      )}
 
       {loading ? (
         <div className="flex flex-col gap-3">

@@ -10,6 +10,8 @@ import StartRound from './pages/StartRound'
 import StartRoundWho from './pages/StartRoundWho'
 import RoundDetail from './pages/RoundDetail'
 import SharePage from './pages/SharePage'
+import GroupDetail from './pages/GroupDetail'
+import JoinGroup from './pages/JoinGroup'
 import OnboardCourses from './pages/OnboardCourses'
 import Terms from './pages/Terms'
 import Privacy from './pages/Privacy'
@@ -66,7 +68,9 @@ function AppRoutes() {
       <Route path="/start" element={<ProtectedRoute><StartRound /></ProtectedRoute>} />
       <Route path="/start/available" element={<ProtectedRoute><StartRoundWho /></ProtectedRoute>} />
       <Route path="/round/:id" element={<ProtectedRoute><RoundDetail /></ProtectedRoute>} />
+      <Route path="/group/:id" element={<ProtectedRoute><GroupDetail /></ProtectedRoute>} />
 
+      <Route path="/join/:inviteCode" element={<JoinGroup />} />
       <Route path="/r/:shareCode" element={<SharePage />} />
       <Route path="/terms" element={<Terms />} />
       <Route path="/privacy" element={<Privacy />} />
