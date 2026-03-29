@@ -17,6 +17,8 @@ export default function GroupDetail() {
   const [savingName, setSavingName] = useState(false)
   const [showLeaveConfirm, setShowLeaveConfirm] = useState(false)
   const [leaving, setLeaving] = useState(false)
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
+  const [deleting, setDeleting] = useState(false)
   const [removingId, setRemovingId] = useState<string | null>(null)
 
   useEffect(() => {
@@ -87,6 +89,17 @@ export default function GroupDetail() {
       .delete()
       .eq('group_id', group.id)
       .eq('user_id', user.id)
+    navigate('/profile')
+  }
+
+  const handleDelete = async () => {
+    if (!group) return
+    setDeleting(true)
+    // group_members cascade-deletes with the group
+    await (supabase as any)
+      .from('groups')
+      .delete()
+      .eq('id', group.id)
     navigate('/profile')
   }
 
@@ -240,6 +253,39 @@ export default function GroupDetail() {
           })}
         </div>
       </section>
+
+      {/* ── Delete Group (owner) ── */}
+      {isOwner && (
+        <>
+          <button
+            onClick={() => setShowDeleteConfirm(true)}
+            className="w-full text-center text-sm font-body text-muted-foreground/60 hover:text-destructive transition-colors py-2"
+          >
+            Delete Group
+          </button>
+
+          {showDeleteConfirm && (
+            <div className="bg-card border border-destructive/30 rounded-2xl p-5 space-y-3">
+              <p className="text-sm font-body text-foreground">Delete "{group.name}"? This will remove all members.</p>
+              <div className="flex gap-2">
+                <button
+                  onClick={handleDelete}
+                  disabled={deleting}
+                  className="flex-1 h-10 bg-destructive text-white font-semibold rounded-xl text-sm font-body disabled:opacity-50"
+                >
+                  {deleting ? 'Deleting...' : 'Delete'}
+                </button>
+                <button
+                  onClick={() => setShowDeleteConfirm(false)}
+                  className="flex-1 h-10 border border-border text-foreground font-semibold rounded-xl text-sm font-body"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
+        </>
+      )}
 
       {/* ── Leave Group (non-owner) ── */}
       {!isOwner && (
