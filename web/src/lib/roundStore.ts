@@ -76,5 +76,6 @@ export function resetDraft() {
     timeEnd: '10:00',
     courseIds: [],
     spots: 4,
+    invitedUsers: [],
   }
 }

@@ -7,7 +7,7 @@ import { DAY_PARTS, DAY_PART_META, computeTimeRange, type DayPart } from '../lib
 import Avatar from '../components/Avatar'
 import StatusBadge from '../components/StatusBadge'
 import InviteFriends from '../components/InviteFriends'
-import type { RoundWithDetails, Rsvp, TeeTime, Course, ProfileSearchResult } from '../lib/types'
+import type { RoundWithDetails, Rsvp, TeeTime, Course } from '../lib/types'
 
 // Generate time options from 6:00 AM to 6:00 PM in 30-min increments
 const TIME_OPTIONS: { value: string; label: string }[] = []

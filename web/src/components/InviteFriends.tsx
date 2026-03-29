@@ -38,14 +38,14 @@ export default function InviteFriends({ selectedUsers, onSelectionChange, existi
         .select('id, full_name, email')
         .or(`full_name.ilike.%${q}%,email.ilike.%${q}%`)
         .neq('id', user.id)
-        .limit(10)
+        .limit(10) as unknown as { data: ProfileSearchResult[] | null }
 
       if (data) {
         const excludeSet = new Set([
           ...existingUserIds,
           ...selectedUsers.map(u => u.id),
         ])
-        setResults(data.filter((p: any) => p.full_name && !excludeSet.has(p.id)) as ProfileSearchResult[])
+        setResults(data.filter(p => p.full_name && !excludeSet.has(p.id)))
         setShowDropdown(true)
       }
       setSearching(false)
