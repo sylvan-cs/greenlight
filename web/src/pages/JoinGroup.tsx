@@ -27,7 +27,7 @@ export default function JoinGroup() {
     if (!inviteCode) return
 
     async function fetchGroup() {
-      const { data, error } = await supabase
+      const { data, error } = await (supabase as any)
         .from('groups')
         .select('id, name, created_by, group_members(user_id, role, profiles(full_name))')
         .eq('invite_code', inviteCode!)
@@ -58,7 +58,7 @@ export default function JoinGroup() {
     setJoining(true)
     setError('')
 
-    const { error: joinError } = await supabase
+    const { error: joinError } = await (supabase as any)
       .from('group_members')
       .insert({
         group_id: group.id,

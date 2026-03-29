@@ -289,7 +289,7 @@ export default function Home() {
               .from('rounds')
               .select('creator_id, rsvps(name, user_id)')
               .eq('id', roundIds[0])
-              .single()
+              .single() as unknown as { data: any }
             if (roundData && roundData.creator_id !== user.id) {
               const organizer = (roundData.rsvps as any[])?.find((r: any) => r.user_id === roundData.creator_id)
               if (organizer) {
@@ -376,7 +376,7 @@ export default function Home() {
     const myFirst = user.user_metadata?.full_name?.split(' ')[0] ?? 'Me'
     const groupName = `${organizerFirst} & ${myFirst}`
 
-    const { data: group } = await supabase
+    const { data: group } = await (supabase as any)
       .from('groups')
       .insert({ name: groupName, created_by: user.id })
       .select('*')
@@ -384,7 +384,7 @@ export default function Home() {
 
     if (group) {
       // Add both users as members
-      await supabase.from('group_members').insert([
+      await (supabase as any).from('group_members').insert([
         { group_id: group.id, user_id: user.id, role: 'owner' },
         { group_id: group.id, user_id: groupPrompt.organizerId, role: 'member' },
       ])

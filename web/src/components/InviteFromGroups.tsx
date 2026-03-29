@@ -28,7 +28,7 @@ export default function InviteFromGroups({ selectedUsers, onSelectionChange, exi
   useEffect(() => {
     if (!user) return
     async function fetchGroups() {
-      const { data: memberData } = await supabase
+      const { data: memberData } = await (supabase as any)
         .from('group_members')
         .select('group_id')
         .eq('user_id', user!.id)
@@ -36,8 +36,8 @@ export default function InviteFromGroups({ selectedUsers, onSelectionChange, exi
         setLoadingGroups(false)
         return
       }
-      const groupIds = memberData.map(m => m.group_id)
-      const { data } = await supabase
+      const groupIds = memberData.map((m: any) => m.group_id)
+      const { data } = await (supabase as any)
         .from('groups')
         .select('*, group_members(*, profiles(id, full_name, email))')
         .in('id', groupIds) as unknown as { data: GroupWithMembers[] | null }

@@ -23,7 +23,7 @@ export default function GroupDetail() {
     if (!id) return
 
     async function fetchGroup() {
-      const { data, error } = await supabase
+      const { data, error } = await (supabase as any)
         .from('groups')
         .select('*, group_members(*, profiles(id, full_name, email))')
         .eq('id', id!)
@@ -52,7 +52,7 @@ export default function GroupDetail() {
   const handleSaveName = async () => {
     if (!group || !nameInput.trim()) return
     setSavingName(true)
-    const { error } = await supabase
+    const { error } = await (supabase as any)
       .from('groups')
       .update({ name: nameInput.trim() })
       .eq('id', group.id)
@@ -66,7 +66,7 @@ export default function GroupDetail() {
   const handleRemoveMember = async (memberId: string) => {
     if (!group) return
     setRemovingId(memberId)
-    const { error } = await supabase
+    const { error } = await (supabase as any)
       .from('group_members')
       .delete()
       .eq('id', memberId)
@@ -82,7 +82,7 @@ export default function GroupDetail() {
   const handleLeave = async () => {
     if (!group || !user) return
     setLeaving(true)
-    await supabase
+    await (supabase as any)
       .from('group_members')
       .delete()
       .eq('group_id', group.id)
@@ -112,8 +112,6 @@ export default function GroupDetail() {
   }
 
   const members = group.group_members ?? []
-  const owner = members.find(m => m.role === 'owner')
-
   return (
     <div className="animate-fade-in space-y-6 px-5 max-w-lg mx-auto pt-4 pb-10">
 

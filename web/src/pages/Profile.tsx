@@ -95,7 +95,7 @@ export default function Profile() {
     if (!user) return
     async function fetchGroups() {
       // Get group IDs the user is a member of
-      const { data: memberData } = await supabase
+      const { data: memberData } = await (supabase as any)
         .from('group_members')
         .select('group_id')
         .eq('user_id', user!.id)
@@ -103,8 +103,8 @@ export default function Profile() {
         setGroupsLoading(false)
         return
       }
-      const groupIds = memberData.map(m => m.group_id)
-      const { data } = await supabase
+      const groupIds = memberData.map((m: any) => m.group_id)
+      const { data } = await (supabase as any)
         .from('groups')
         .select('*, group_members(*, profiles(id, full_name, email))')
         .in('id', groupIds) as unknown as { data: GroupWithMembers[] | null }
@@ -141,7 +141,7 @@ export default function Profile() {
   const handleCreateGroup = async () => {
     if (!user || !newGroupName.trim()) return
     setCreatingGroup(true)
-    const { data: group, error } = await supabase
+    const { data: group, error } = await (supabase as any)
       .from('groups')
       .insert({ name: newGroupName.trim(), created_by: user.id })
       .select('*')
@@ -149,19 +149,19 @@ export default function Profile() {
 
     if (!error && group) {
       // Add creator as owner member
-      await supabase.from('group_members').insert({
+      await (supabase as any).from('group_members').insert({
         group_id: group.id,
         user_id: user.id,
         role: 'owner',
       })
       // Refetch groups
-      const { data: memberData } = await supabase
+      const { data: memberData } = await (supabase as any)
         .from('group_members')
         .select('group_id')
         .eq('user_id', user.id)
       if (memberData) {
-        const groupIds = memberData.map(m => m.group_id)
-        const { data } = await supabase
+        const groupIds = memberData.map((m: any) => m.group_id)
+        const { data } = await (supabase as any)
           .from('groups')
           .select('*, group_members(*, profiles(id, full_name, email))')
           .in('id', groupIds) as unknown as { data: GroupWithMembers[] | null }
