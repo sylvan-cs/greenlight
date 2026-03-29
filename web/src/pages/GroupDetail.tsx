@@ -95,20 +95,18 @@ export default function GroupDetail() {
   const handleDelete = async () => {
     if (!group) return
     setDeleting(true)
-    const { error: delErr } = await (supabase as any)
+    // Always delete members first, then group (avoids FK constraint issues)
+    const { error: memDelErr } = await (supabase as any)
+      .from('group_members')
+      .delete()
+      .eq('group_id', group.id)
+    console.log('Delete members error:', memDelErr)
+    const { error: grpDelErr } = await (supabase as any)
       .from('groups')
       .delete()
       .eq('id', group.id)
-    console.log('Delete group error:', delErr)
-    if (!delErr) {
-      navigate('/profile')
-    } else {
-      // If cascade fails, delete members first then group
-      await (supabase as any).from('group_members').delete().eq('group_id', group.id)
-      const { error: retryErr } = await (supabase as any).from('groups').delete().eq('id', group.id)
-      console.log('Retry delete error:', retryErr)
-      navigate('/profile')
-    }
+    console.log('Delete group error:', grpDelErr)
+    navigate('/profile')
   }
 
   if (loading) {
