@@ -3,7 +3,7 @@
   "notify": {
     "email": "sylvan@cedarstreet.co",
     "resend_api_key": "",
-    "from_email": "The Starter <hello@thestarter.golf>"
+    "from_email": "The Starter <teetimes@thestarter.golf>"
   },
   "courses": {
     "galloping_hill": { "enabled": false },
