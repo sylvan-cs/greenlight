@@ -49,7 +49,7 @@ export default function Privacy() {
             <p>We use the following third-party services to operate The Starter:</p>
             <ul className="list-disc list-inside mt-2 space-y-1">
               <li><strong className="text-foreground">Supabase</strong> — database and authentication</li>
-              <li><strong className="text-foreground">Twilio</strong> — SMS notifications</li>
+              <li><strong className="text-foreground">Telnyx</strong> — SMS notifications</li>
               <li><strong className="text-foreground">Resend</strong> — email notifications</li>
               <li><strong className="text-foreground">Vercel</strong> — hosting</li>
             </ul>

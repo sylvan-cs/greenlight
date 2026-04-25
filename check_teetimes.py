@@ -2140,20 +2140,30 @@ def _haversine_miles(lat1, lng1, lat2, lng2):
     return R * 2 * math.asin(math.sqrt(a))
 
 
-def _send_sms(twilio_sid, twilio_token, twilio_phone, to_phone, message):
-    """Send an SMS via Twilio. Returns True on success."""
+def _send_sms(api_key, from_phone, to_phone, message):
+    """Send an SMS via Telnyx. Returns True on success."""
     try:
-        from twilio.rest import Client
-        client = Client(twilio_sid, twilio_token)
-        msg = client.messages.create(
-            body=message,
-            from_=twilio_phone,
-            to=to_phone,
+        import urllib.request
+        payload = json.dumps({
+            "from": from_phone,
+            "to": to_phone,
+            "text": message,
+        }).encode()
+        req = urllib.request.Request(
+            "https://api.telnyx.com/v2/messages",
+            data=payload,
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
         )
-        print(f"    Twilio: sent {msg.sid}")
-        return True
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            result = json.loads(resp.read())
+            msg_id = (result.get("data") or {}).get("id", "ok")
+            print(f"    Telnyx: sent {msg_id}")
+            return True
     except Exception as e:
-        print(f"    Twilio error: {e}")
+        print(f"    Telnyx error: {e}")
         return False
 
 
@@ -2285,9 +2295,8 @@ def _check_round_matches():
     """Check for matching tee times for open watching rounds and send notifications."""
     supabase_url = os.environ.get("SUPABASE_URL", "")
     supabase_key = os.environ.get("SUPABASE_SERVICE_KEY", "")
-    twilio_sid = os.environ.get("TWILIO_ACCOUNT_SID", "")
-    twilio_token = os.environ.get("TWILIO_AUTH_TOKEN", "")
-    twilio_phone = os.environ.get("TWILIO_PHONE_NUMBER", "")
+    telnyx_api_key = os.environ.get("TELNYX_API_KEY", "")
+    telnyx_phone = os.environ.get("TELNYX_PHONE_NUMBER", "")
 
     config = _load_config()
     notify_cfg = config.get("notify", {}) if config else {}
@@ -2560,7 +2569,7 @@ def _check_round_matches():
                     )
 
                 # SMS to creator
-                if creator and creator.get("phone") and creator.get("sms_opt_in") and twilio_sid and twilio_token and twilio_phone and sms_sent < MAX_SMS_PER_CYCLE:
+                if creator and creator.get("phone") and creator.get("sms_opt_in") and telnyx_api_key and telnyx_phone and sms_sent < MAX_SMS_PER_CYCLE:
                     sms_msg = (
                         f"\u26f3 {best_s['time_display']} at {best_s['course_name']} on {date_display}"
                         f" \u2014 {best_s['spots_display'] or '?'} spots\n"
@@ -2568,7 +2577,7 @@ def _check_round_matches():
                     if watcher_count > 0:
                         sms_msg += f"{watcher_count} of your group {'is' if watcher_count == 1 else 'are'} also watching.\n"
                     sms_msg += f"Book: {best_s['booking_url']}\n- The Starter"
-                    if _send_sms(twilio_sid, twilio_token, twilio_phone, creator["phone"], sms_msg):
+                    if _send_sms(telnyx_api_key, telnyx_phone, creator["phone"], sms_msg):
                         sms_sent += 1
 
                 # --- Notify co-watchers (is_watching=true, status='in') ---
@@ -2606,7 +2615,7 @@ def _check_round_matches():
                         )
 
                     # SMS to co-watcher
-                    if twilio_sid and twilio_token and twilio_phone and sms_sent < MAX_SMS_PER_CYCLE:
+                    if telnyx_api_key and telnyx_phone and sms_sent < MAX_SMS_PER_CYCLE:
                         if rsvp_profile and rsvp_profile.get("phone") and rsvp_profile.get("sms_opt_in"):
                             rsvp_sms = (
                                 f"\u26f3 {best_s['time_display']} at {best_s['course_name']} on {date_display}"
@@ -2614,7 +2623,7 @@ def _check_round_matches():
                                 f"{creator_first} is watching too \u2014 first to book gets it.\n"
                                 f"Book: {best_s['booking_url']}\n- The Starter"
                             )
-                            if _send_sms(twilio_sid, twilio_token, twilio_phone, rsvp_profile["phone"], rsvp_sms):
+                            if _send_sms(telnyx_api_key, telnyx_phone, rsvp_profile["phone"], rsvp_sms):
                                 sms_sent += 1
 
                 # --- Notify non-watcher RSVPs (status='in', not watching) ---

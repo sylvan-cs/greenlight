@@ -37,11 +37,10 @@ export default async function handler(request: Request) {
     Authorization: `Bearer ${supabaseKey}`,
   }
 
-  // Twilio env vars (optional — SMS skipped if not configured)
-  const twilioSid = process.env.TWILIO_ACCOUNT_SID
-  const twilioToken = process.env.TWILIO_AUTH_TOKEN
-  const twilioPhone = process.env.TWILIO_PHONE_NUMBER
-  const twilioConfigured = !!(twilioSid && twilioToken && twilioPhone)
+  // Telnyx env vars (optional — SMS skipped if not configured)
+  const telnyxApiKey = process.env.TELNYX_API_KEY
+  const telnyxPhone = process.env.TELNYX_PHONE_NUMBER
+  const telnyxConfigured = !!(telnyxApiKey && telnyxPhone)
 
   // Fetch the round with courses and RSVPs
   const roundRes = await fetch(
@@ -163,11 +162,9 @@ export default async function handler(request: Request) {
     }
   }
 
-  // Send SMS via Twilio to RSVPs who are "in" and have opted in
+  // Send SMS via Telnyx to RSVPs who are "in" and have opted in
   let smsSent = 0
-  if (twilioConfigured) {
-    const twilioUrl = `https://api.twilio.com/2010-04-01/Accounts/${twilioSid}/Messages.json`
-    const twilioAuth = btoa(`${twilioSid}:${twilioToken}`)
+  if (telnyxConfigured) {
     const smsBody = `\u2705 ${bookerName} locked it in. ${timeStr} at ${courseDisplay} on ${dateLong}. See you out there.\n\u2014 The Starter`
 
     const inRsvps = (round.rsvps ?? []).filter((r: any) => r.status === 'in' && r.user_id)
@@ -182,16 +179,16 @@ export default async function handler(request: Request) {
         const profile = profiles?.[0]
 
         if (profile?.sms_opt_in && profile?.phone) {
-          await fetch(twilioUrl, {
+          await fetch('https://api.telnyx.com/v2/messages', {
             method: 'POST',
             headers: {
-              'Authorization': `Basic ${twilioAuth}`,
-              'Content-Type': 'application/x-www-form-urlencoded',
+              'Authorization': `Bearer ${telnyxApiKey}`,
+              'Content-Type': 'application/json',
             },
-            body: new URLSearchParams({
-              From: twilioPhone!,
-              To: profile.phone,
-              Body: smsBody,
+            body: JSON.stringify({
+              from: telnyxPhone!,
+              to: profile.phone,
+              text: smsBody,
             }),
           })
           smsSent++
