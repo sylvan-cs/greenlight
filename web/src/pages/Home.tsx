@@ -236,7 +236,9 @@ export default function Home() {
     async function fetchRounds() {
       if (!user) return
 
-      // Fetch user's own rounds
+      const today = new Date().toISOString().slice(0, 10)
+
+      // Fetch user's own rounds — only upcoming, or anything still being watched
       const { data, error } = await supabase
         .from('rounds')
         .select(`
@@ -245,6 +247,7 @@ export default function Home() {
           rsvps(*)
         `)
         .eq('creator_id', user.id)
+        .or(`round_date.gte.${today},status.eq.watching`)
         .order('round_date', { ascending: true })
 
       if (error) {
@@ -272,6 +275,7 @@ export default function Home() {
           .in('id', roundIds)
           .neq('creator_id', user.id)
           .neq('status', 'cancelled')
+          .or(`round_date.gte.${today},status.eq.watching`)
           .order('round_date', { ascending: true })
 
         if (invData) {

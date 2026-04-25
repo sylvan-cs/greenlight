@@ -239,7 +239,9 @@ export default function RoundDetail() {
       return
     }
 
-    const { error } = await supabase
+    // Precondition: only confirm if the round is still in 'watching' state.
+    // If a co-watcher already confirmed, the row will not match and `data` is empty.
+    const { data, error } = await supabase
       .from('rounds')
       .update({
         status: 'booked',
@@ -250,25 +252,49 @@ export default function RoundDetail() {
         matched_at: new Date().toISOString(),
       })
       .eq('id', round.id)
+      .eq('status', 'watching')
+      .select()
 
-    if (!error) {
-      localStorage.removeItem(`booking_${id}`)
-      setRound(prev => prev ? {
-        ...prev,
-        status: 'booked',
-        has_specific_time: true,
-        specific_tee_time: bookedTime.tee_time,
-        specific_course_id: bookedTime.course_id,
-        matched_tee_time_id: bookedTime.id,
-      } : prev)
-
-      // Send booking notification emails (fire-and-forget)
-      fetch('/api/notify-booking', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ roundId: round.id, bookerId: user?.id }),
-      }).catch(() => {})
+    if (error) {
+      alert('Could not confirm booking: ' + error.message)
+      setConfirming(false)
+      setBookingTimeId(null)
+      return
     }
+
+    if (!data || data.length === 0) {
+      // Someone else already booked this round.
+      alert('This round was just booked by someone else in your group.')
+      // Re-fetch the latest round state so the UI reflects what they did
+      const { data: fresh } = await supabase
+        .from('rounds')
+        .select('*, round_courses(*, courses(*)), rsvps(*)')
+        .eq('id', round.id)
+        .single()
+      if (fresh) setRound(fresh as unknown as RoundWithDetails)
+      localStorage.removeItem(`booking_${id}`)
+      setConfirming(false)
+      setBookingTimeId(null)
+      return
+    }
+
+    localStorage.removeItem(`booking_${id}`)
+    setRound(prev => prev ? {
+      ...prev,
+      status: 'booked',
+      has_specific_time: true,
+      specific_tee_time: bookedTime.tee_time,
+      specific_course_id: bookedTime.course_id,
+      matched_tee_time_id: bookedTime.id,
+    } : prev)
+
+    // Send booking notification emails (fire-and-forget)
+    fetch('/api/notify-booking', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ roundId: round.id, bookerId: user?.id }),
+    }).catch(() => {})
+
     setConfirming(false)
     setBookingTimeId(null)
   }
@@ -435,7 +461,7 @@ export default function RoundDetail() {
     fetch('/api/notify-round-update', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ roundId: round.id }),
+      body: JSON.stringify({ roundId: round.id, editorId: user?.id }),
     }).catch(() => {})
 
     setEditing(false)
@@ -1066,7 +1092,7 @@ export default function RoundDetail() {
                 round_id: round.id,
                 user_id: u.id,
                 name: u.full_name,
-                email: u.email,
+                email: u.email?.toLowerCase() ?? null,
                 status: 'invited',
               })
               if (!error) {

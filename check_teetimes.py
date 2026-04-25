@@ -2328,327 +2328,332 @@ def _check_round_matches():
         MAX_SMS_PER_CYCLE = 5
 
         for round_data in open_rounds:
-            round_id = round_data["id"]
-            spots_needed = round_data.get("spots_needed", 1)
-            time_start = round_data["time_window_start"]
-            time_end = round_data["time_window_end"]
-            round_date = round_data["round_date"]
+            try:
+                round_id = round_data["id"]
+                spots_needed = round_data.get("spots_needed", 1)
+                time_start = round_data["time_window_start"]
+                time_end = round_data["time_window_end"]
+                round_date = round_data["round_date"]
 
-            # Get round's courses
-            rc_resp = (
-                sb.table("round_courses")
-                .select("course_id")
-                .eq("round_id", round_id)
-                .execute()
-            )
-            course_ids = [rc["course_id"] for rc in (rc_resp.data or [])]
-            if not course_ids:
-                continue
+                # Get round's courses
+                rc_resp = (
+                    sb.table("round_courses")
+                    .select("course_id")
+                    .eq("round_id", round_id)
+                    .execute()
+                )
+                course_ids = [rc["course_id"] for rc in (rc_resp.data or [])]
+                if not course_ids:
+                    continue
 
-            # Get creator profile for preferences
-            creator_resp = (
-                sb.table("profiles")
-                .select("full_name, phone, sms_opt_in, email_opt_in, flexibility_minutes, course_radius_miles")
-                .eq("id", round_data["creator_id"])
-                .single()
-                .execute()
-            )
-            creator = creator_resp.data
-            flexibility_minutes = (creator.get("flexibility_minutes") if creator else None) or 60
-            course_radius_miles = (creator.get("course_radius_miles") if creator else None) or 25
+                # Get creator profile for preferences
+                creator_resp = (
+                    sb.table("profiles")
+                    .select("full_name, phone, sms_opt_in, email_opt_in, flexibility_minutes, course_radius_miles")
+                    .eq("id", round_data["creator_id"])
+                    .single()
+                    .execute()
+                )
+                creator = creator_resp.data
+                flexibility_minutes = (creator.get("flexibility_minutes") if creator else None) or 60
+                course_radius_miles = (creator.get("course_radius_miles") if creator else None) or 25
 
-            # --- 1. Exact matches (preferred courses, exact time window) ---
-            suggestions = []
+                # --- 1. Exact matches (preferred courses, exact time window) ---
+                suggestions = []
 
-            tt_resp = (
-                sb.table("tee_times")
-                .select("*")
-                .in_("course_id", course_ids)
-                .eq("tee_date", round_date)
-                .gte("tee_time", time_start)
-                .lte("tee_time", time_end)
-                .eq("is_available", True)
-                .order("tee_time")
-                .limit(20)
-                .execute()
-            )
-            for tt in (tt_resp.data or []):
-                if tt.get("spots_available") is None or tt["spots_available"] >= spots_needed:
-                    course_info = all_courses.get(tt["course_id"], {})
-                    suggestions.append({
-                        "tee_time": tt,
-                        "course_name": course_info.get("name", "Unknown Course"),
-                        "match_type": "exact",
-                        "match_label": "Your time",
-                        "booking_url": tt.get("booking_link") or course_info.get("booking_url", ""),
-                    })
-
-            # --- 2. Flex matches (preferred courses, outside time window) ---
-            if flexibility_minutes and flexibility_minutes > 0:
-                # Calculate expanded window
-                try:
-                    start_dt = datetime.strptime(time_start, "%H:%M")
-                    end_dt = datetime.strptime(time_end, "%H:%M")
-                    flex_start = (start_dt - timedelta(minutes=flexibility_minutes)).strftime("%H:%M")
-                    flex_end = (end_dt + timedelta(minutes=flexibility_minutes)).strftime("%H:%M")
-                except Exception:
-                    flex_start = time_start
-                    flex_end = time_end
-
-                # Query times in the flex window but NOT in the exact window
-                flex_resp = (
+                tt_resp = (
                     sb.table("tee_times")
                     .select("*")
                     .in_("course_id", course_ids)
                     .eq("tee_date", round_date)
-                    .gte("tee_time", flex_start)
-                    .lte("tee_time", flex_end)
+                    .gte("tee_time", time_start)
+                    .lte("tee_time", time_end)
                     .eq("is_available", True)
                     .order("tee_time")
                     .limit(20)
                     .execute()
                 )
-                for tt in (flex_resp.data or []):
-                    # Skip if already in exact window
-                    if time_start <= tt["tee_time"] <= time_end:
-                        continue
+                for tt in (tt_resp.data or []):
                     if tt.get("spots_available") is None or tt["spots_available"] >= spots_needed:
-                        # Calculate how far outside the window
-                        try:
-                            tt_dt = datetime.strptime(tt["tee_time"], "%H:%M")
-                            if tt_dt < start_dt:
-                                diff = int((start_dt - tt_dt).total_seconds() / 60)
-                            else:
-                                diff = int((tt_dt - end_dt).total_seconds() / 60)
-                        except Exception:
-                            diff = flexibility_minutes
                         course_info = all_courses.get(tt["course_id"], {})
                         suggestions.append({
                             "tee_time": tt,
                             "course_name": course_info.get("name", "Unknown Course"),
-                            "match_type": "flex",
-                            "match_label": f"Close match \u2014 {diff} min outside your window",
+                            "match_type": "exact",
+                            "match_label": "Your time",
                             "booking_url": tt.get("booking_link") or course_info.get("booking_url", ""),
                         })
 
-            # --- 3. Radius matches (nearby courses not in selected set) ---
-            if course_radius_miles and course_radius_miles > 0:
-                # Get lat/lng of selected courses
-                selected_coords = []
-                for cid in course_ids:
-                    c = all_courses.get(cid, {})
-                    if c.get("lat") and c.get("lng"):
-                        selected_coords.append((float(c["lat"]), float(c["lng"])))
+                # --- 2. Flex matches (preferred courses, outside time window) ---
+                if flexibility_minutes and flexibility_minutes > 0:
+                    # Calculate expanded window
+                    try:
+                        start_dt = datetime.strptime(time_start, "%H:%M")
+                        end_dt = datetime.strptime(time_end, "%H:%M")
+                        flex_start = (start_dt - timedelta(minutes=flexibility_minutes)).strftime("%H:%M")
+                        flex_end = (end_dt + timedelta(minutes=flexibility_minutes)).strftime("%H:%M")
+                    except Exception:
+                        flex_start = time_start
+                        flex_end = time_end
 
-                if selected_coords:
-                    # Find nearby courses not in selected set
-                    nearby_ids = []
-                    nearby_distances = {}
-                    for cid, c in all_courses.items():
-                        if cid in course_ids:
+                    # Query times in the flex window but NOT in the exact window
+                    flex_resp = (
+                        sb.table("tee_times")
+                        .select("*")
+                        .in_("course_id", course_ids)
+                        .eq("tee_date", round_date)
+                        .gte("tee_time", flex_start)
+                        .lte("tee_time", flex_end)
+                        .eq("is_available", True)
+                        .order("tee_time")
+                        .limit(20)
+                        .execute()
+                    )
+                    for tt in (flex_resp.data or []):
+                        # Skip if already in exact window
+                        if time_start <= tt["tee_time"] <= time_end:
                             continue
-                        if not c.get("lat") or not c.get("lng"):
-                            continue
-                        clat, clng = float(c["lat"]), float(c["lng"])
-                        min_dist = min(
-                            _haversine_miles(slat, slng, clat, clng)
-                            for slat, slng in selected_coords
-                        )
-                        if min_dist <= course_radius_miles:
-                            nearby_ids.append(cid)
-                            nearby_distances[cid] = round(min_dist)
+                        if tt.get("spots_available") is None or tt["spots_available"] >= spots_needed:
+                            # Calculate how far outside the window
+                            try:
+                                tt_dt = datetime.strptime(tt["tee_time"], "%H:%M")
+                                if tt_dt < start_dt:
+                                    diff = int((start_dt - tt_dt).total_seconds() / 60)
+                                else:
+                                    diff = int((tt_dt - end_dt).total_seconds() / 60)
+                            except Exception:
+                                diff = flexibility_minutes
+                            course_info = all_courses.get(tt["course_id"], {})
+                            suggestions.append({
+                                "tee_time": tt,
+                                "course_name": course_info.get("name", "Unknown Course"),
+                                "match_type": "flex",
+                                "match_label": f"Close match \u2014 {diff} min outside your window",
+                                "booking_url": tt.get("booking_link") or course_info.get("booking_url", ""),
+                            })
 
-                    if nearby_ids:
-                        nearby_resp = (
-                            sb.table("tee_times")
-                            .select("*")
-                            .in_("course_id", nearby_ids)
-                            .eq("tee_date", round_date)
-                            .gte("tee_time", time_start)
-                            .lte("tee_time", time_end)
-                            .eq("is_available", True)
-                            .order("tee_time")
-                            .limit(20)
+                # --- 3. Radius matches (nearby courses not in selected set) ---
+                if course_radius_miles and course_radius_miles > 0:
+                    # Get lat/lng of selected courses
+                    selected_coords = []
+                    for cid in course_ids:
+                        c = all_courses.get(cid, {})
+                        if c.get("lat") and c.get("lng"):
+                            selected_coords.append((float(c["lat"]), float(c["lng"])))
+
+                    if selected_coords:
+                        # Find nearby courses not in selected set
+                        nearby_ids = []
+                        nearby_distances = {}
+                        for cid, c in all_courses.items():
+                            if cid in course_ids:
+                                continue
+                            if not c.get("lat") or not c.get("lng"):
+                                continue
+                            clat, clng = float(c["lat"]), float(c["lng"])
+                            min_dist = min(
+                                _haversine_miles(slat, slng, clat, clng)
+                                for slat, slng in selected_coords
+                            )
+                            if min_dist <= course_radius_miles:
+                                nearby_ids.append(cid)
+                                nearby_distances[cid] = round(min_dist)
+
+                        if nearby_ids:
+                            nearby_resp = (
+                                sb.table("tee_times")
+                                .select("*")
+                                .in_("course_id", nearby_ids)
+                                .eq("tee_date", round_date)
+                                .gte("tee_time", time_start)
+                                .lte("tee_time", time_end)
+                                .eq("is_available", True)
+                                .order("tee_time")
+                                .limit(20)
+                                .execute()
+                            )
+                            for tt in (nearby_resp.data or []):
+                                if tt.get("spots_available") is None or tt["spots_available"] >= spots_needed:
+                                    course_info = all_courses.get(tt["course_id"], {})
+                                    dist = nearby_distances.get(tt["course_id"], "?")
+                                    suggestions.append({
+                                        "tee_time": tt,
+                                        "course_name": course_info.get("name", "Unknown Course"),
+                                        "match_type": "radius",
+                                        "match_label": f"Nearby course \u2014 {dist} miles away",
+                                        "booking_url": tt.get("booking_link") or course_info.get("booking_url", ""),
+                                    })
+
+                if not suggestions:
+                    continue
+
+                # Cap at 3 suggestions (already ranked: exact first, flex second, radius third)
+                suggestions = suggestions[:3]
+
+                # Use the best match (first suggestion) for the round update
+                best = suggestions[0]
+                match = best["tee_time"]
+
+                print(f"  Round {round_id} matched with tee time {match['id']} ({best['match_type']})")
+
+                # Update round status
+                now_iso = datetime.now(timezone.utc).isoformat()
+                sb.table("rounds").update({
+                    "matched_tee_time_id": match["id"],
+                    "status": "found",
+                    "matched_at": now_iso,
+                }).eq("id", round_id).execute()
+
+                # Build suggestion dicts for email
+                date_display = _format_date_friendly(round_date)
+                date_long = _format_date_long(round_date)
+                date_short = round_date  # YYYY-MM-DD for booking instruction
+
+                email_suggestions = []
+                for s in suggestions:
+                    tt = s["tee_time"]
+                    email_suggestions.append({
+                        "course_name": s["course_name"],
+                        "time_display": _format_time_ampm(tt["tee_time"]),
+                        "date_long": date_long,
+                        "date_short": date_display,
+                        "price_display": tt.get("price_label", ""),
+                        "spots_display": tt.get("spots_available"),
+                        "match_label": s["match_label"],
+                        "match_type": s["match_type"],
+                        "booking_url": s["booking_url"],
+                        "players": str(spots_needed),
+                    })
+
+                # Fetch all RSVPs with status='in' (includes co-watchers)
+                rsvp_resp = (
+                    sb.table("rsvps")
+                    .select("user_id, name, is_watching")
+                    .eq("round_id", round_id)
+                    .eq("status", "in")
+                    .execute()
+                )
+                all_in_rsvps = rsvp_resp.data or []
+                creator_name = (creator.get("full_name") or "Someone") if creator else "Someone"
+                creator_first = creator_name.split(" ")[0]
+
+                # Count co-watchers (excluding creator)
+                co_watchers = [r for r in all_in_rsvps if r.get("is_watching") and r.get("user_id") != round_data["creator_id"]]
+                watcher_count = len(co_watchers)
+
+                best_s = email_suggestions[0]
+
+                # --- Notify creator (always) ---
+                creator_email = None
+                try:
+                    user_resp = sb.auth.admin.get_user_by_id(round_data["creator_id"])
+                    creator_email = user_resp.user.email if user_resp and user_resp.user else None
+                except Exception as e:
+                    print(f"    Could not get creator email: {e}")
+
+                if creator_email and (not creator or creator.get("email_opt_in", True)):
+                    watcher_line = f"{watcher_count} of your group {'is' if watcher_count == 1 else 'are'} also watching." if watcher_count > 0 else ""
+                    _send_match_email(
+                        creator_email, email_suggestions, round_id,
+                        extra_line=watcher_line,
+                        from_email=from_email,
+                    )
+
+                # SMS to creator
+                if creator and creator.get("phone") and creator.get("sms_opt_in") and twilio_sid and twilio_token and twilio_phone and sms_sent < MAX_SMS_PER_CYCLE:
+                    sms_msg = (
+                        f"\u26f3 {best_s['time_display']} at {best_s['course_name']} on {date_display}"
+                        f" \u2014 {best_s['spots_display'] or '?'} spots\n"
+                    )
+                    if watcher_count > 0:
+                        sms_msg += f"{watcher_count} of your group {'is' if watcher_count == 1 else 'are'} also watching.\n"
+                    sms_msg += f"Book: {best_s['booking_url']}\n- The Starter"
+                    if _send_sms(twilio_sid, twilio_token, twilio_phone, creator["phone"], sms_msg):
+                        sms_sent += 1
+
+                # --- Notify co-watchers (is_watching=true, status='in') ---
+                for rsvp in co_watchers:
+                    if not rsvp.get("user_id"):
+                        continue
+
+                    rsvp_profile = None
+                    try:
+                        rsvp_profile_resp = (
+                            sb.table("profiles")
+                            .select("phone, sms_opt_in, email_opt_in")
+                            .eq("id", rsvp["user_id"])
+                            .single()
                             .execute()
                         )
-                        for tt in (nearby_resp.data or []):
-                            if tt.get("spots_available") is None or tt["spots_available"] >= spots_needed:
-                                course_info = all_courses.get(tt["course_id"], {})
-                                dist = nearby_distances.get(tt["course_id"], "?")
-                                suggestions.append({
-                                    "tee_time": tt,
-                                    "course_name": course_info.get("name", "Unknown Course"),
-                                    "match_type": "radius",
-                                    "match_label": f"Nearby course \u2014 {dist} miles away",
-                                    "booking_url": tt.get("booking_link") or course_info.get("booking_url", ""),
-                                })
+                        rsvp_profile = rsvp_profile_resp.data
+                    except Exception:
+                        pass
 
-            if not suggestions:
-                continue
+                    rsvp_email = None
+                    try:
+                        rsvp_user_resp = sb.auth.admin.get_user_by_id(rsvp["user_id"])
+                        rsvp_email = rsvp_user_resp.user.email if rsvp_user_resp and rsvp_user_resp.user else None
+                    except Exception:
+                        pass
 
-            # Cap at 3 suggestions (already ranked: exact first, flex second, radius third)
-            suggestions = suggestions[:3]
-
-            # Use the best match (first suggestion) for the round update
-            best = suggestions[0]
-            match = best["tee_time"]
-
-            print(f"  Round {round_id} matched with tee time {match['id']} ({best['match_type']})")
-
-            # Update round status
-            now_iso = datetime.now(timezone.utc).isoformat()
-            sb.table("rounds").update({
-                "matched_tee_time_id": match["id"],
-                "status": "found",
-                "matched_at": now_iso,
-            }).eq("id", round_id).execute()
-
-            # Build suggestion dicts for email
-            date_display = _format_date_friendly(round_date)
-            date_long = _format_date_long(round_date)
-            date_short = round_date  # YYYY-MM-DD for booking instruction
-
-            email_suggestions = []
-            for s in suggestions:
-                tt = s["tee_time"]
-                email_suggestions.append({
-                    "course_name": s["course_name"],
-                    "time_display": _format_time_ampm(tt["tee_time"]),
-                    "date_long": date_long,
-                    "date_short": date_display,
-                    "price_display": tt.get("price_label", ""),
-                    "spots_display": tt.get("spots_available"),
-                    "match_label": s["match_label"],
-                    "match_type": s["match_type"],
-                    "booking_url": s["booking_url"],
-                    "players": str(spots_needed),
-                })
-
-            # Fetch all RSVPs with status='in' (includes co-watchers)
-            rsvp_resp = (
-                sb.table("rsvps")
-                .select("user_id, name, is_watching")
-                .eq("round_id", round_id)
-                .eq("status", "in")
-                .execute()
-            )
-            all_in_rsvps = rsvp_resp.data or []
-            creator_name = (creator.get("full_name") or "Someone") if creator else "Someone"
-            creator_first = creator_name.split(" ")[0]
-
-            # Count co-watchers (excluding creator)
-            co_watchers = [r for r in all_in_rsvps if r.get("is_watching") and r.get("user_id") != round_data["creator_id"]]
-            watcher_count = len(co_watchers)
-
-            best_s = email_suggestions[0]
-
-            # --- Notify creator (always) ---
-            creator_email = None
-            try:
-                user_resp = sb.auth.admin.get_user_by_id(round_data["creator_id"])
-                creator_email = user_resp.user.email if user_resp and user_resp.user else None
-            except Exception as e:
-                print(f"    Could not get creator email: {e}")
-
-            if creator_email and (not creator or creator.get("email_opt_in", True)):
-                watcher_line = f"{watcher_count} of your group {'is' if watcher_count == 1 else 'are'} also watching." if watcher_count > 0 else ""
-                _send_match_email(
-                    creator_email, email_suggestions, round_id,
-                    extra_line=watcher_line,
-                    from_email=from_email,
-                )
-
-            # SMS to creator
-            if creator and creator.get("phone") and creator.get("sms_opt_in") and twilio_sid and twilio_token and twilio_phone and sms_sent < MAX_SMS_PER_CYCLE:
-                sms_msg = (
-                    f"\u26f3 {best_s['time_display']} at {best_s['course_name']} on {date_display}"
-                    f" \u2014 {best_s['spots_display'] or '?'} spots\n"
-                )
-                if watcher_count > 0:
-                    sms_msg += f"{watcher_count} of your group {'is' if watcher_count == 1 else 'are'} also watching.\n"
-                sms_msg += f"Book: {best_s['booking_url']}\n- The Starter"
-                if _send_sms(twilio_sid, twilio_token, twilio_phone, creator["phone"], sms_msg):
-                    sms_sent += 1
-
-            # --- Notify co-watchers (is_watching=true, status='in') ---
-            for rsvp in co_watchers:
-                if not rsvp.get("user_id"):
-                    continue
-
-                rsvp_profile = None
-                try:
-                    rsvp_profile_resp = (
-                        sb.table("profiles")
-                        .select("phone, sms_opt_in, email_opt_in")
-                        .eq("id", rsvp["user_id"])
-                        .single()
-                        .execute()
-                    )
-                    rsvp_profile = rsvp_profile_resp.data
-                except Exception:
-                    pass
-
-                rsvp_email = None
-                try:
-                    rsvp_user_resp = sb.auth.admin.get_user_by_id(rsvp["user_id"])
-                    rsvp_email = rsvp_user_resp.user.email if rsvp_user_resp and rsvp_user_resp.user else None
-                except Exception:
-                    pass
-
-                # Email co-watcher with booking link
-                if rsvp_email and (not rsvp_profile or rsvp_profile.get("email_opt_in", True)):
-                    _send_rsvp_email(
-                        rsvp_email, creator_first, email_suggestions,
-                        round_data["share_code"],
-                        extra_line=f"{creator_first} is watching too \u2014 first to book gets it.",
-                        from_email=from_email,
-                    )
-
-                # SMS to co-watcher
-                if twilio_sid and twilio_token and twilio_phone and sms_sent < MAX_SMS_PER_CYCLE:
-                    if rsvp_profile and rsvp_profile.get("phone") and rsvp_profile.get("sms_opt_in"):
-                        rsvp_sms = (
-                            f"\u26f3 {best_s['time_display']} at {best_s['course_name']} on {date_display}"
-                            f" \u2014 {best_s['spots_display'] or '?'} spots\n"
-                            f"{creator_first} is watching too \u2014 first to book gets it.\n"
-                            f"Book: {best_s['booking_url']}\n- The Starter"
+                    # Email co-watcher with booking link
+                    if rsvp_email and (not rsvp_profile or rsvp_profile.get("email_opt_in", True)):
+                        _send_rsvp_email(
+                            rsvp_email, creator_first, email_suggestions,
+                            round_data["share_code"],
+                            extra_line=f"{creator_first} is watching too \u2014 first to book gets it.",
+                            from_email=from_email,
                         )
-                        if _send_sms(twilio_sid, twilio_token, twilio_phone, rsvp_profile["phone"], rsvp_sms):
-                            sms_sent += 1
 
-            # --- Notify non-watcher RSVPs (status='in', not watching) ---
-            non_watchers = [r for r in all_in_rsvps if not r.get("is_watching") and r.get("user_id") != round_data["creator_id"]]
-            for rsvp in non_watchers:
-                if not rsvp.get("user_id"):
-                    continue
+                    # SMS to co-watcher
+                    if twilio_sid and twilio_token and twilio_phone and sms_sent < MAX_SMS_PER_CYCLE:
+                        if rsvp_profile and rsvp_profile.get("phone") and rsvp_profile.get("sms_opt_in"):
+                            rsvp_sms = (
+                                f"\u26f3 {best_s['time_display']} at {best_s['course_name']} on {date_display}"
+                                f" \u2014 {best_s['spots_display'] or '?'} spots\n"
+                                f"{creator_first} is watching too \u2014 first to book gets it.\n"
+                                f"Book: {best_s['booking_url']}\n- The Starter"
+                            )
+                            if _send_sms(twilio_sid, twilio_token, twilio_phone, rsvp_profile["phone"], rsvp_sms):
+                                sms_sent += 1
 
-                rsvp_profile = None
-                try:
-                    rsvp_profile_resp = (
-                        sb.table("profiles")
-                        .select("phone, sms_opt_in, email_opt_in")
-                        .eq("id", rsvp["user_id"])
-                        .single()
-                        .execute()
-                    )
-                    rsvp_profile = rsvp_profile_resp.data
-                except Exception:
-                    pass
+                # --- Notify non-watcher RSVPs (status='in', not watching) ---
+                non_watchers = [r for r in all_in_rsvps if not r.get("is_watching") and r.get("user_id") != round_data["creator_id"]]
+                for rsvp in non_watchers:
+                    if not rsvp.get("user_id"):
+                        continue
 
-                rsvp_email = None
-                try:
-                    rsvp_user_resp = sb.auth.admin.get_user_by_id(rsvp["user_id"])
-                    rsvp_email = rsvp_user_resp.user.email if rsvp_user_resp and rsvp_user_resp.user else None
-                except Exception:
-                    pass
+                    rsvp_profile = None
+                    try:
+                        rsvp_profile_resp = (
+                            sb.table("profiles")
+                            .select("phone, sms_opt_in, email_opt_in")
+                            .eq("id", rsvp["user_id"])
+                            .single()
+                            .execute()
+                        )
+                        rsvp_profile = rsvp_profile_resp.data
+                    except Exception:
+                        pass
 
-                if rsvp_email and (not rsvp_profile or rsvp_profile.get("email_opt_in", True)):
-                    _send_rsvp_email(
-                        rsvp_email, creator_first, email_suggestions,
-                        round_data["share_code"],
-                        from_email=from_email,
-                    )
+                    rsvp_email = None
+                    try:
+                        rsvp_user_resp = sb.auth.admin.get_user_by_id(rsvp["user_id"])
+                        rsvp_email = rsvp_user_resp.user.email if rsvp_user_resp and rsvp_user_resp.user else None
+                    except Exception:
+                        pass
 
+                    if rsvp_email and (not rsvp_profile or rsvp_profile.get("email_opt_in", True)):
+                        _send_rsvp_email(
+                            rsvp_email, creator_first, email_suggestions,
+                            round_data["share_code"],
+                            from_email=from_email,
+                        )
+
+            except Exception as e:
+                rid = round_data.get("id", "<no id>")
+                print(f"  Round {rid} processing failed: {e}")
+                continue
         print(f"  Matching complete. {sms_sent} SMS sent this cycle.")
 
     except Exception as e:

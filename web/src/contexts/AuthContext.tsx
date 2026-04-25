@@ -32,17 +32,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     // Initial session check
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session)
-      setUser(session?.user ?? null)
-      isInitialized.current = true
-      setLoading(false) // this is the ONLY place loading transitions to false
+    supabase.auth.getSession()
+      .then(({ data: { session } }) => {
+        setSession(session)
+        setUser(session?.user ?? null)
+        isInitialized.current = true
+        setLoading(false) // this is the ONLY place loading transitions to false
 
-      // Check onboarding in background, don't block
-      if (session?.user) {
-        checkOnboarding(session.user.id).then(setNeedsOnboarding)
-      }
-    })
+        // Check onboarding in background, don't block
+        if (session?.user) {
+          checkOnboarding(session.user.id).then(setNeedsOnboarding)
+        }
+      })
+      .catch(() => {
+        // Network/Supabase failure shouldn't strand the splash forever
+        isInitialized.current = true
+        setLoading(false)
+      })
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, eventSession) => {
       setSession(eventSession)

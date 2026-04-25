@@ -27,23 +27,39 @@ export default function OnboardCourses() {
   const handleSave = async (selectedIds: Set<string>) => {
     if (!user) return
     setIsSaving(true)
+    setSaveError('')
 
-    // Delete existing rows first, then insert — avoids unique constraint conflicts
-    await supabase.from('user_courses').delete().eq('user_id', user.id)
+    const desired = Array.from(selectedIds)
+    const previous = Array.from(existingIds ?? [])
 
-    const rows = Array.from(selectedIds).map(course_id => ({
-      user_id: user.id,
-      course_id,
-    }))
+    // Diff so we never empty the user's courses if the new write fails.
+    const toAdd = desired.filter(id => !previous.includes(id))
+    const toRemove = previous.filter(id => !desired.includes(id))
 
-    const { error } = await supabase.from('user_courses').insert(rows)
-
-    if (!error) {
-      setNeedsOnboarding(false)
-      navigate('/home')
-    } else {
-      setSaveError('Something went wrong saving your courses. Please try again.')
+    // Insert additions first — if this fails, the user keeps their existing set.
+    if (toAdd.length > 0) {
+      const { error: insertError } = await supabase
+        .from('user_courses')
+        .insert(toAdd.map(course_id => ({ user_id: user.id, course_id })))
+      if (insertError) {
+        setSaveError('Something went wrong saving your courses. Please try again.')
+        setIsSaving(false)
+        return
+      }
     }
+
+    // Now drop the removed ones. Failure here just leaves stragglers — non-fatal.
+    if (toRemove.length > 0) {
+      await supabase
+        .from('user_courses')
+        .delete()
+        .eq('user_id', user.id)
+        .in('course_id', toRemove)
+    }
+
+    setExistingIds(new Set(desired))
+    setNeedsOnboarding(false)
+    navigate('/home')
     setIsSaving(false)
   }
 

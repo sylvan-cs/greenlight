@@ -8,7 +8,7 @@ export default async function handler(request: Request) {
     })
   }
 
-  const { roundId } = await request.json()
+  const { roundId, editorId } = await request.json()
   if (!roundId) {
     return new Response(JSON.stringify({ error: 'Missing roundId' }), {
       status: 400,
@@ -76,15 +76,26 @@ export default async function handler(request: Request) {
   // Player count
   const playerCount = round.spots_needed ?? 0
 
-  // Organizer first name
-  const organizerFullName = round.rsvps?.[0]?.name ?? 'Your organizer'
-  const organizerFirstName = organizerFullName.split(' ')[0]
+  // Editor first name — fall back to organizer (first RSVP) if no editorId
+  let editorFirstName = 'Your organizer'
+  if (editorId) {
+    const editorRes = await fetch(
+      `${supabaseUrl}/rest/v1/profiles?id=eq.${editorId}&select=full_name`,
+      { headers: { apikey: supabaseKey, Authorization: `Bearer ${supabaseKey}` } }
+    )
+    const editors = await editorRes.json()
+    if (editors?.[0]?.full_name) {
+      editorFirstName = editors[0].full_name.split(' ')[0]
+    }
+  } else {
+    const organizerFullName = round.rsvps?.[0]?.name ?? 'Your organizer'
+    editorFirstName = organizerFullName.split(' ')[0]
+  }
 
   // Collect emails from RSVPs who are "in" and provided an email
-  // Exclude the organizer (first RSVP) — they made the change
+  // Exclude the editor — they made the change
   const recipients: string[] = (round.rsvps ?? [])
-    .slice(1)
-    .filter((r: any) => r.status === 'in' && r.email)
+    .filter((r: any) => r.status === 'in' && r.email && r.user_id !== editorId)
     .map((r: any) => r.email)
 
   if (recipients.length === 0) {
@@ -96,7 +107,7 @@ export default async function handler(request: Request) {
   const subject = `Round updated — ${courseList} on ${dateShort}`
 
   const body = [
-    `${organizerFirstName} updated the round details.`,
+    `${editorFirstName} updated the round details.`,
     '',
     'What changed:',
     `${dateLong} \u00b7 ${timeWindow} \u00b7 ${playerCount} players`,

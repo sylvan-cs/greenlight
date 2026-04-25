@@ -137,7 +137,7 @@ export default function StartRoundWho() {
         round_id: round.id,
         user_id: u.id,
         name: u.full_name,
-        email: u.email,
+        email: u.email?.toLowerCase() ?? null,
         status: 'invited',
       }))
       await supabase.from('rsvps').insert(inviteInserts)

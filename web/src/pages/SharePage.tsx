@@ -147,7 +147,7 @@ export default function SharePage() {
       .insert({
         round_id: round.id,
         name: name.trim(),
-        email: email.trim() || null,
+        email: email.trim().toLowerCase() || null,
         status,
       })
       .select('id')

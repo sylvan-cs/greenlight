@@ -99,8 +99,7 @@ export default function Profile() {
         .from('group_members')
         .select('group_id')
         .eq('user_id', user!.id)
-      console.log('fetchGroups memberData:', memberData, 'error:', memErr)
-      if (!memberData || memberData.length === 0) {
+      if (memErr || !memberData || memberData.length === 0) {
         setGroupsLoading(false)
         return
       }
@@ -110,14 +109,12 @@ export default function Profile() {
         .from('groups')
         .select('*, group_members(id, group_id, user_id, role, joined_at, profiles:user_id(id, full_name, email))')
         .in('id', groupIds) as unknown as { data: GroupWithMembers[] | null; error: any }
-      console.log('fetchGroups groups:', data, 'error:', groupErr)
       if (groupErr) {
         // Fallback: fetch without profiles join
         const { data: fallback } = await (supabase as any)
           .from('groups')
           .select('*, group_members(*)')
           .in('id', groupIds) as unknown as { data: GroupWithMembers[] | null }
-        console.log('fetchGroups fallback:', fallback)
         if (fallback) setGroups(fallback)
       } else if (data) {
         setGroups(data)
@@ -160,33 +157,28 @@ export default function Profile() {
       .select('*')
       .single()
 
-    console.log('Group insert result:', { group, error })
-
     if (!error && group) {
       // Add creator as owner member
-      const { error: memberError } = await (supabase as any).from('group_members').insert({
+      await (supabase as any).from('group_members').insert({
         group_id: group.id,
         user_id: user.id,
         role: 'owner',
       })
-      console.log('Member insert error:', memberError)
 
       // Optimistically add to state while refetching
       setGroups(prev => [...prev, { ...group, group_members: [{ id: 'temp', group_id: group.id, user_id: user.id, role: 'owner' as const, joined_at: new Date().toISOString(), profiles: { id: user.id, full_name: user.user_metadata?.full_name ?? 'You', email: user.email ?? '' } }] }])
 
       // Refetch groups for accurate data
-      const { data: memberData, error: fetchErr } = await (supabase as any)
+      const { data: memberData } = await (supabase as any)
         .from('group_members')
         .select('group_id')
         .eq('user_id', user.id)
-      console.log('Refetch members:', { memberData, fetchErr })
       if (memberData && memberData.length > 0) {
         const groupIds = memberData.map((m: any) => m.group_id)
         const { data } = await (supabase as any)
           .from('groups')
           .select('*, group_members(id, group_id, user_id, role, joined_at, profiles:user_id(id, full_name, email))')
           .in('id', groupIds) as unknown as { data: GroupWithMembers[] | null }
-        console.log('Refetch groups:', data)
         if (data) setGroups(data)
       }
     }
