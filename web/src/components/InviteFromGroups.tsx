@@ -174,12 +174,28 @@ export default function InviteFromGroups({ selectedUsers, onSelectionChange, exi
           <p className="text-xs font-body text-muted-foreground">Invite a group</p>
           <div className="flex flex-wrap gap-2">
             {groups.map(g => {
-              const memberCount = (g.group_members ?? []).filter(m => m.user_id !== user?.id).length
+              // Count only members who would actually be invited if the button
+              // is clicked: not self, not already RSVP'd, not already selected.
+              const excludeSet = new Set([
+                user?.id ?? '',
+                ...existingUserIds,
+                ...selectedUsers.map(u => u.id),
+              ])
+              const invitableCount = (g.group_members ?? []).filter(
+                m => !excludeSet.has(m.user_id) && m.profiles?.full_name,
+              ).length
+              const allInvited = invitableCount === 0
               return (
                 <button
                   key={g.id}
                   onClick={() => inviteGroup(g)}
-                  className="flex items-center gap-1.5 px-3.5 py-2 rounded-full text-sm font-body font-medium border border-border text-muted-foreground hover:border-primary/40 hover:text-primary transition-all duration-150 active:scale-95"
+                  disabled={allInvited}
+                  className={`flex items-center gap-1.5 px-3.5 py-2 rounded-full text-sm font-body font-medium border transition-all duration-150 active:scale-95 ${
+                    allInvited
+                      ? 'border-border/50 text-muted-foreground/50 cursor-not-allowed'
+                      : 'border-border text-muted-foreground hover:border-primary/40 hover:text-primary'
+                  }`}
+                  title={allInvited ? 'Everyone in this group is already invited' : undefined}
                 >
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                     <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
@@ -187,7 +203,7 @@ export default function InviteFromGroups({ selectedUsers, onSelectionChange, exi
                     <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
                     <path d="M16 3.13a4 4 0 0 1 0 7.75" />
                   </svg>
-                  {g.name} ({memberCount})
+                  {g.name} {allInvited ? '\u2713' : `(${invitableCount})`}
                 </button>
               )
             })}

@@ -72,6 +72,11 @@ export default function RoundDetail() {
   const [editError, setEditError] = useState('')
   const [togglingWatch, setTogglingWatch] = useState(false)
 
+  // Invite UI feedback: brief inline confirmation message after a successful invite
+  const [inviteFlash, setInviteFlash] = useState<string | null>(null)
+  // Track in-flight invites to disable repeat clicks on the same person
+  const [invitingIds, setInvitingIds] = useState<Set<string>>(new Set())
+
   // Restore booking-in-progress state from localStorage on mount/return
   useEffect(() => {
     if (!id) return
@@ -1103,56 +1108,80 @@ export default function RoundDetail() {
 
       {/* ── Invite Friends (organizer only) ── */}
       {isOrganizer && round.status !== 'cancelled' && (
-        <InviteFromGroups
-          selectedUsers={[]}
-          onSelectionChange={(users) => {
-            // Immediately invite each new user. Optimistically update local
-            // state on success — realtime INSERT events aren't reliable here
-            // (likely realtime not enabled on rsvps), so the UI would otherwise
-            // appear unresponsive and let the user re-invite the same person.
-            users.forEach(async (u) => {
-              // Local guard: skip if already RSVP'd. Cheap defense against
-              // double-clicks; the parent re-renders between clicks once we
-              // append below.
-              if (rsvps.some(r => r.user_id === u.id)) return
+        <div className="space-y-2">
+          <InviteFromGroups
+            selectedUsers={[]}
+            onSelectionChange={(users) => {
+              // Immediately invite each new user. Optimistically update local
+              // state on success — realtime INSERT events aren't reliable here,
+              // so the UI would otherwise appear unresponsive and let the user
+              // re-invite the same person.
+              users.forEach(async (u) => {
+                // Skip if already RSVP'd or insert in flight for this user.
+                if (rsvps.some(r => r.user_id === u.id)) return
+                if (invitingIds.has(u.id)) return
 
-              const { data, error } = await supabase
-                .from('rsvps')
-                .insert({
-                  round_id: round.id,
-                  user_id: u.id,
-                  name: u.full_name,
-                  email: u.email?.toLowerCase() ?? null,
-                  status: 'invited',
+                setInvitingIds(prev => new Set(prev).add(u.id))
+
+                const { data, error } = await supabase
+                  .from('rsvps')
+                  .insert({
+                    round_id: round.id,
+                    user_id: u.id,
+                    name: u.full_name,
+                    email: u.email?.toLowerCase() ?? null,
+                    status: 'invited',
+                  })
+                  .select()
+                  .single()
+
+                setInvitingIds(prev => {
+                  const next = new Set(prev)
+                  next.delete(u.id)
+                  return next
                 })
-                .select()
-                .single()
 
-              if (error) {
-                console.error('Invite insert failed:', error)
-                return
-              }
+                if (error) {
+                  console.error('Invite insert failed:', error)
+                  setInviteFlash(`Couldn\u2019t invite ${u.full_name.split(' ')[0]}: ${error.message}`)
+                  setTimeout(() => setInviteFlash(null), 4000)
+                  return
+                }
 
-              // Optimistically merge the new RSVP so existingUserIds updates
-              // and the WHO'S IN section reflects the invite immediately.
-              const inserted = data as unknown as Rsvp | null
-              if (inserted) {
-                setRound(prev => {
-                  if (!prev) return prev
-                  if (prev.rsvps.some(r => r.id === inserted.id)) return prev
-                  return { ...prev, rsvps: [...prev.rsvps, inserted] }
-                })
-              }
+                const inserted = data as unknown as Rsvp | null
+                if (inserted) {
+                  setRound(prev => {
+                    if (!prev) return prev
+                    if (prev.rsvps.some(r => r.id === inserted.id)) return prev
+                    return { ...prev, rsvps: [...prev.rsvps, inserted] }
+                  })
+                }
 
-              fetch('/api/notify-invite', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ roundId: round.id, invitedUserIds: [u.id] }),
-              }).catch(e => console.error('notify-invite failed:', e))
-            })
-          }}
-          existingUserIds={rsvps.filter(r => r.user_id).map(r => r.user_id!)}
-        />
+                setInviteFlash(`Invited ${u.full_name.split(' ')[0]}`)
+                setTimeout(() => setInviteFlash(null), 2500)
+
+                fetch('/api/notify-invite', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ roundId: round.id, invitedUserIds: [u.id] }),
+                }).catch(e => console.error('notify-invite failed:', e))
+              })
+            }}
+            existingUserIds={rsvps.filter(r => r.user_id).map(r => r.user_id!)}
+          />
+          {inviteFlash && (
+            <div
+              role="status"
+              className={`text-sm font-body px-3 py-2 rounded-lg border animate-fade-in ${
+                inviteFlash.startsWith('Couldn\u2019t')
+                  ? 'bg-destructive/10 border-destructive/40 text-destructive'
+                  : 'bg-primary/10 border-primary/40 text-primary'
+              }`}
+            >
+              {inviteFlash.startsWith('Couldn\u2019t') ? '' : '\u2713 '}{inviteFlash}
+            </div>
+          )}
+        </div>
       )}
 
       {/* ── Cancel ── */}
