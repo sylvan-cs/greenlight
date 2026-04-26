@@ -128,14 +128,24 @@ export default function Profile() {
     if (!user) return
     setSavingCourses(true)
 
-    await supabase.from('user_courses').delete().eq('user_id', user.id)
+    // Diff add/remove instead of delete-then-insert — avoids unique-key
+    // collisions if the delete is silently blocked.
+    const currentIds = new Set(userCourses.map(c => c.id))
+    const desiredIds = selectedIds
+    const toAdd = [...desiredIds].filter(id => !currentIds.has(id))
+    const toRemove = [...currentIds].filter(id => !desiredIds.has(id))
 
-    if (selectedIds.size > 0) {
-      const rows = Array.from(selectedIds).map(course_id => ({
-        user_id: user.id,
-        course_id,
-      }))
-      await supabase.from('user_courses').insert(rows)
+    if (toAdd.length > 0) {
+      await supabase
+        .from('user_courses')
+        .insert(toAdd.map(course_id => ({ user_id: user.id, course_id })))
+    }
+    if (toRemove.length > 0) {
+      await supabase
+        .from('user_courses')
+        .delete()
+        .eq('user_id', user.id)
+        .in('course_id', toRemove)
     }
 
     const { data } = await supabase

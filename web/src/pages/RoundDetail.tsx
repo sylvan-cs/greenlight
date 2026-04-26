@@ -432,16 +432,36 @@ export default function RoundDetail() {
       return
     }
 
-    // Replace round_courses
-    await supabase.from('round_courses').delete().eq('round_id', round.id)
-    const { error: coursesError } = await supabase
-      .from('round_courses')
-      .insert(courseIds.map(course_id => ({ round_id: round.id, course_id })))
+    // Diff round_courses instead of delete-then-insert. A silent delete failure
+    // (e.g. RLS denying it) followed by an insert would collide with the
+    // (round_id, course_id) unique index.
+    const currentCourseIds = new Set((round.round_courses ?? []).map(rc => rc.course_id))
+    const desiredCourseIds = new Set(courseIds)
+    const coursesToAdd = courseIds.filter(id => !currentCourseIds.has(id))
+    const coursesToRemove = [...currentCourseIds].filter(id => !desiredCourseIds.has(id))
 
-    if (coursesError) {
-      setEditError(coursesError.message)
-      setSaving(false)
-      return
+    if (coursesToAdd.length > 0) {
+      const { error: addError } = await supabase
+        .from('round_courses')
+        .insert(coursesToAdd.map(course_id => ({ round_id: round.id, course_id })))
+      if (addError) {
+        setEditError(addError.message)
+        setSaving(false)
+        return
+      }
+    }
+
+    if (coursesToRemove.length > 0) {
+      const { error: removeError } = await supabase
+        .from('round_courses')
+        .delete()
+        .eq('round_id', round.id)
+        .in('course_id', coursesToRemove)
+      if (removeError) {
+        setEditError(removeError.message)
+        setSaving(false)
+        return
+      }
     }
 
     // Re-fetch full round to get updated round_courses with course details
