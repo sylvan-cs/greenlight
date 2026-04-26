@@ -81,7 +81,7 @@ export default function JoinGroup() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ groupId: group.id, newUserId: user.id }),
-    }).catch(() => {})
+    }).catch(e => console.error('notify-group-join failed:', e))
 
     setJoined(true)
     setJoining(false)

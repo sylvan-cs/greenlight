@@ -150,7 +150,7 @@ export default function StartRoundWho() {
           roundId: round.id,
           invitedUserIds: draft.invitedUsers.map(u => u.id),
         }),
-      }).catch(() => {})
+      }).catch(e => console.error('notify-invite failed:', e))
     }
 
     resetDraft()

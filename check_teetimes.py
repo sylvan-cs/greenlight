@@ -2174,7 +2174,7 @@ def _send_match_email(to_email, suggestions, round_id,
     api_key = os.environ.get("RESEND_API_KEY", "")
     to_email = os.environ.get("NOTIFY_EMAIL") or to_email
     if not api_key or api_key.startswith("re_YOUR"):
-        print("    Email: no Resend API key configured")
+        print("WARNING: RESEND_API_KEY not set \u2014 email notifications disabled")
         return False
 
     best = suggestions[0]
@@ -2237,6 +2237,7 @@ def _send_rsvp_email(to_email, creator_name, suggestions,
     api_key = os.environ.get("RESEND_API_KEY", "")
     to_email = os.environ.get("NOTIFY_EMAIL") or to_email
     if not api_key or api_key.startswith("re_YOUR"):
+        print("WARNING: RESEND_API_KEY not set \u2014 email notifications disabled")
         return False
 
     best = suggestions[0]

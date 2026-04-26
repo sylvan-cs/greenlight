@@ -293,7 +293,7 @@ export default function RoundDetail() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ roundId: round.id, bookerId: user?.id }),
-    }).catch(() => {})
+    }).catch(e => console.error('notify-booking failed:', e))
 
     setConfirming(false)
     setBookingTimeId(null)
@@ -462,7 +462,7 @@ export default function RoundDetail() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ roundId: round.id, editorId: user?.id }),
-    }).catch(() => {})
+    }).catch(e => console.error('notify-round-update failed:', e))
 
     setEditing(false)
     setSaving(false)
@@ -1100,7 +1100,7 @@ export default function RoundDetail() {
                   method: 'POST',
                   headers: { 'Content-Type': 'application/json' },
                   body: JSON.stringify({ roundId: round.id, invitedUserIds: [u.id] }),
-                }).catch(() => {})
+                }).catch(e => console.error('notify-invite failed:', e))
               }
             })
           }}
