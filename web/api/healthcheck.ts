@@ -19,21 +19,37 @@ async function checkSupabase(): Promise<Status> {
   }
 }
 
-async function checkResend(): Promise<{ status: Status; domains?: Array<{ name: string; status: string }> }> {
+async function checkResend(): Promise<{ status: Status; detail?: string; domains?: Array<{ name: string; status: string }> }> {
   const key = process.env.RESEND_API_KEY
   if (!key) return { status: 'missing_key' }
   try {
     const res = await fetch('https://api.resend.com/domains', {
       headers: { Authorization: `Bearer ${key}` },
     })
-    if (!res.ok) return { status: 'error' }
-    const body = await res.json()
-    const domains = (body?.data ?? []).map((d: any) => ({ name: d.name, status: d.status }))
-    // 'verified' means SPF/DKIM/DMARC all green and domain is sendable
-    const anyVerified = domains.some((d: { status: string }) => d.status === 'verified')
-    return { status: anyVerified ? 'ok' : 'error', domains }
-  } catch {
-    return { status: 'error' }
+    if (res.ok) {
+      const body = await res.json()
+      const domains = (body?.data ?? []).map((d: any) => ({ name: d.name, status: d.status }))
+      const anyVerified = domains.some((d: { status: string }) => d.status === 'verified')
+      return {
+        status: anyVerified ? 'ok' : 'error',
+        detail: anyVerified ? undefined : `no verified domain (${domains.length} listed)`,
+        domains,
+      }
+    }
+
+    // Sending-only keys 401 on /domains but can still POST /emails — that still counts as ok.
+    if (res.status === 401) {
+      const body = await res.text()
+      if (body.includes('restricted_api_key')) {
+        return { status: 'ok', detail: 'sending-only key (domain status not verifiable)' }
+      }
+      return { status: 'error', detail: `HTTP 401: ${body.slice(0, 200)}` }
+    }
+
+    const body = await res.text()
+    return { status: 'error', detail: `HTTP ${res.status}: ${body.slice(0, 200)}` }
+  } catch (e) {
+    return { status: 'error', detail: String(e) }
   }
 }
 
@@ -70,6 +86,7 @@ export default async function handler(request: Request) {
   const body = {
     supabase,
     resend: resend.status,
+    resend_detail: resend.detail,
     resend_domains: resend.domains,
     telnyx,
     timestamp: new Date().toISOString(),
