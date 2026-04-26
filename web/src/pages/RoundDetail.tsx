@@ -1106,22 +1106,49 @@ export default function RoundDetail() {
         <InviteFromGroups
           selectedUsers={[]}
           onSelectionChange={(users) => {
-            // Immediately invite each new user
+            // Immediately invite each new user. Optimistically update local
+            // state on success — realtime INSERT events aren't reliable here
+            // (likely realtime not enabled on rsvps), so the UI would otherwise
+            // appear unresponsive and let the user re-invite the same person.
             users.forEach(async (u) => {
-              const { error } = await supabase.from('rsvps').insert({
-                round_id: round.id,
-                user_id: u.id,
-                name: u.full_name,
-                email: u.email?.toLowerCase() ?? null,
-                status: 'invited',
-              })
-              if (!error) {
-                fetch('/api/notify-invite', {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ roundId: round.id, invitedUserIds: [u.id] }),
-                }).catch(e => console.error('notify-invite failed:', e))
+              // Local guard: skip if already RSVP'd. Cheap defense against
+              // double-clicks; the parent re-renders between clicks once we
+              // append below.
+              if (rsvps.some(r => r.user_id === u.id)) return
+
+              const { data, error } = await supabase
+                .from('rsvps')
+                .insert({
+                  round_id: round.id,
+                  user_id: u.id,
+                  name: u.full_name,
+                  email: u.email?.toLowerCase() ?? null,
+                  status: 'invited',
+                })
+                .select()
+                .single()
+
+              if (error) {
+                console.error('Invite insert failed:', error)
+                return
               }
+
+              // Optimistically merge the new RSVP so existingUserIds updates
+              // and the WHO'S IN section reflects the invite immediately.
+              const inserted = data as unknown as Rsvp | null
+              if (inserted) {
+                setRound(prev => {
+                  if (!prev) return prev
+                  if (prev.rsvps.some(r => r.id === inserted.id)) return prev
+                  return { ...prev, rsvps: [...prev.rsvps, inserted] }
+                })
+              }
+
+              fetch('/api/notify-invite', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ roundId: round.id, invitedUserIds: [u.id] }),
+              }).catch(e => console.error('notify-invite failed:', e))
             })
           }}
           existingUserIds={rsvps.filter(r => r.user_id).map(r => r.user_id!)}
