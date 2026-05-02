@@ -19,38 +19,18 @@ async function checkSupabase(): Promise<Status> {
   }
 }
 
-async function checkResend(): Promise<{ status: Status; detail?: string; domains?: Array<{ name: string; status: string }> }> {
+async function checkResend(): Promise<{ status: Status; detail?: string }> {
+  // We deliberately don't hit Resend's API here. The only key we have in
+  // production is sending-only, so any read endpoint (/domains, /emails,
+  // /api-keys) returns 401 and shows up as a noisy error in Resend's logs.
+  // Instead, validate that a key exists and looks well-formed. Actual send
+  // failures still get logged from notify-* handlers.
   const key = process.env.RESEND_API_KEY
   if (!key) return { status: 'missing_key' }
-  try {
-    const res = await fetch('https://api.resend.com/domains', {
-      headers: { Authorization: `Bearer ${key}` },
-    })
-    if (res.ok) {
-      const body = await res.json()
-      const domains = (body?.data ?? []).map((d: any) => ({ name: d.name, status: d.status }))
-      const anyVerified = domains.some((d: { status: string }) => d.status === 'verified')
-      return {
-        status: anyVerified ? 'ok' : 'error',
-        detail: anyVerified ? undefined : `no verified domain (${domains.length} listed)`,
-        domains,
-      }
-    }
-
-    // Sending-only keys 401 on /domains but can still POST /emails — that still counts as ok.
-    if (res.status === 401) {
-      const body = await res.text()
-      if (body.includes('restricted_api_key')) {
-        return { status: 'ok', detail: 'sending-only key (domain status not verifiable)' }
-      }
-      return { status: 'error', detail: `HTTP 401: ${body.slice(0, 200)}` }
-    }
-
-    const body = await res.text()
-    return { status: 'error', detail: `HTTP ${res.status}: ${body.slice(0, 200)}` }
-  } catch (e) {
-    return { status: 'error', detail: String(e) }
+  if (!key.startsWith('re_')) {
+    return { status: 'error', detail: 'RESEND_API_KEY does not look like a Resend key (expected re_*)' }
   }
+  return { status: 'ok', detail: 'key present (send path not probed to avoid log noise)' }
 }
 
 async function checkTelnyx(): Promise<Status> {
@@ -87,7 +67,6 @@ export default async function handler(request: Request) {
     supabase,
     resend: resend.status,
     resend_detail: resend.detail,
-    resend_domains: resend.domains,
     telnyx,
     timestamp: new Date().toISOString(),
   }
