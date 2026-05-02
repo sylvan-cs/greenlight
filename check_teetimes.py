@@ -254,6 +254,69 @@ def _filter_courses(courses, config):
     return [c for c in courses if course_flags.get(c["key"], {}).get("enabled", False)]
 
 
+def _demand_filter_courses(courses):
+    """Narrow `courses` to those any user actually cares about.
+
+    A course is "in demand" if either:
+      - At least one round (status open/watching, round_date >= today) selects it via round_courses
+      - At least one user has it in their user_courses preferences
+
+    Falls back to the input list unchanged if Supabase isn't configured or
+    the query fails — better to over-scrape than to silently scrape nothing.
+    Skipped entirely when scan_config disables a course (galloping_hill is
+    Cloudflare-blocked, etc.) — _filter_courses already handled that gate.
+    """
+    supabase_url = os.environ.get("SUPABASE_URL", "")
+    supabase_key = os.environ.get("SUPABASE_SERVICE_KEY", "")
+    if not supabase_url or not supabase_key:
+        return courses
+
+    try:
+        from supabase import create_client
+        sb = create_client(supabase_url, supabase_key)
+
+        # 1. Course UUIDs referenced by active rounds
+        rounds_resp = (
+            sb.table("rounds")
+            .select("round_courses(course_id)")
+            .in_("status", ["open", "watching"])
+            .gte("round_date", TODAY)
+            .execute()
+        )
+        active_uuids = set()
+        for r in (rounds_resp.data or []):
+            for rc in (r.get("round_courses") or []):
+                if rc.get("course_id"):
+                    active_uuids.add(rc["course_id"])
+
+        # 2. Course UUIDs from user preferences
+        uc_resp = sb.table("user_courses").select("course_id").execute()
+        for uc in (uc_resp.data or []):
+            if uc.get("course_id"):
+                active_uuids.add(uc["course_id"])
+
+        if not active_uuids:
+            print("  Demand filter: no active rounds or user preferences — skipping all courses")
+            return []
+
+        # 3. Map UUID -> slug from courses table
+        courses_resp = sb.table("courses").select("id, slug").in_("id", list(active_uuids)).execute()
+        active_slugs = {c["slug"] for c in (courses_resp.data or []) if c.get("slug")}
+
+        # 4. Filter scraper's courses to those whose slug is in demand
+        filtered = [
+            c for c in courses
+            if COURSE_SLUG_MAP.get(c["key"]) in active_slugs
+        ]
+        skipped = [c["key"] for c in courses if c not in filtered]
+        if skipped:
+            print(f"  Demand filter: skipping {len(skipped)} unused course(s): {', '.join(skipped)}")
+        return filtered
+    except Exception as e:
+        print(f"  Demand filter failed ({e}); falling back to full course list")
+        return courses
+
+
 def _build_dates_to_check():
     """Build the list of dates to scan: next 14 days + any open round dates from Supabase."""
     global DATES_TO_CHECK
@@ -302,6 +365,13 @@ def run(scan_all=False):
     print(f"Starting scan on {_RUNNER}")
     print(f"Run: {datetime.now().isoformat()}")
     _build_dates_to_check()
+
+    # Demand-driven filter: only scrape courses with active rounds or user
+    # preferences referencing them. Saves ~30% runtime when CA courses (or
+    # any other unused ones) sit idle. Bypassed by --all.
+    if not scan_all:
+        active_courses = _demand_filter_courses(active_courses)
+
     print(f"Courses: {len(active_courses)} of {len(COURSES)} enabled\n")
 
     if not active_courses:
