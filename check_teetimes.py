@@ -1889,16 +1889,23 @@ def _sync_to_supabase(all_results, active_courses):
         past_count = len(past_resp.data) if past_resp.data else 0
         print(f"  Supabase: marked {past_count} past tee times as unavailable")
 
-        # — Cleanup: delete tee times older than 30 days
+        # — Cleanup: delete tee times older than 30 days.
+        # Isolated try/except so an FK violation (a tee_time still referenced
+        # by rounds.matched_tee_time_id) doesn't kill the upsert step that
+        # follows. Migration 004 adds ON DELETE SET NULL to that FK; until
+        # every environment has it, this guard keeps notifications working.
         cutoff_30d = (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d")
-        del_resp = (
-            sb.table("tee_times")
-            .delete()
-            .lt("tee_date", cutoff_30d)
-            .execute()
-        )
-        del_count = len(del_resp.data) if del_resp.data else 0
-        print(f"  Supabase: deleted {del_count} tee times older than 30 days")
+        try:
+            del_resp = (
+                sb.table("tee_times")
+                .delete()
+                .lt("tee_date", cutoff_30d)
+                .execute()
+            )
+            del_count = len(del_resp.data) if del_resp.data else 0
+            print(f"  Supabase: deleted {del_count} tee times older than 30 days")
+        except Exception as cleanup_err:
+            print(f"  Supabase: 30-day cleanup skipped ({cleanup_err}); continuing with upsert")
 
         # b) Build rows to upsert
         now_iso = datetime.now(timezone.utc).isoformat()
