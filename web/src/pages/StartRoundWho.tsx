@@ -158,6 +158,21 @@ export default function StartRoundWho() {
       }).catch(e => console.error('notify-invite failed:', e))
     }
 
+    // Soft "notify group" broadcast — different from the hard invites above.
+    // Fires a "Sylvan is playing — want to join?" email to every member of
+    // each selected group who isn't already on the round. No RSVPs created
+    // upfront; recipients opt in via the share link if interested.
+    if (draft.notifyGroupIds.length > 0) {
+      fetch('/api/notify-group-broadcast', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          roundId: round.id,
+          groupIds: draft.notifyGroupIds,
+        }),
+      }).catch(e => console.error('notify-group-broadcast failed:', e))
+    }
+
     resetDraft()
     navigate(`/round/${round.id}`)
   }

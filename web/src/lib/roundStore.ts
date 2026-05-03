@@ -23,6 +23,8 @@ export interface RoundDraft {
   courseIds: string[]
   spots: number
   invitedUsers: InvitedUser[]
+  /** Group IDs to "notify" (soft broadcast — does NOT pre-create RSVPs). */
+  notifyGroupIds: string[]
 }
 
 /** Compute the combined start/end from selected day parts */
@@ -51,10 +53,16 @@ let draft: RoundDraft = {
   courseIds: [],
   spots: 4,
   invitedUsers: [],
+  notifyGroupIds: [],
 }
 
 export function getDraft(): RoundDraft {
-  return { ...draft, dayParts: [...draft.dayParts], invitedUsers: [...draft.invitedUsers] }
+  return {
+    ...draft,
+    dayParts: [...draft.dayParts],
+    invitedUsers: [...draft.invitedUsers],
+    notifyGroupIds: [...draft.notifyGroupIds],
+  }
 }
 
 export function updateDraft(updates: Partial<RoundDraft>) {
@@ -77,5 +85,6 @@ export function resetDraft() {
     courseIds: [],
     spots: 4,
     invitedUsers: [],
+    notifyGroupIds: [],
   }
 }

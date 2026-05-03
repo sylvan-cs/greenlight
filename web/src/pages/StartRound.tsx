@@ -95,6 +95,11 @@ export default function StartRound() {
   const [invitedUsers, setInvitedUsers] = useState<ProfileSearchResult[]>(draft.invitedUsers)
   const [error] = useState('')
 
+  // "Notify a group" checkboxes — soft broadcast at round creation,
+  // does NOT pre-create RSVPs (different from InviteFromGroups above).
+  const [myGroups, setMyGroups] = useState<{ id: string; name: string; member_count: number }[]>([])
+  const [notifyGroupIds, setNotifyGroupIds] = useState<Set<string>>(new Set(draft.notifyGroupIds))
+
   useEffect(() => {
     async function fetchCourses() {
       if (!user) return
@@ -126,6 +131,33 @@ export default function StartRound() {
     }
     fetchCourses()
   }, [user]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Fetch user's groups for the "Notify a group" UI.
+  useEffect(() => {
+    if (!user) return
+    async function fetchGroups() {
+      const { data: memberRows } = await (supabase as any)
+        .from('group_members')
+        .select('group_id')
+        .eq('user_id', user!.id)
+      if (!memberRows || memberRows.length === 0) return
+      const groupIds = memberRows.map((m: any) => m.group_id)
+      const { data: groupRows } = await (supabase as any)
+        .from('groups')
+        .select('id, name, group_members(user_id)')
+        .in('id', groupIds)
+      if (!groupRows) return
+      setMyGroups(
+        groupRows.map((g: any) => ({
+          id: g.id,
+          name: g.name,
+          // Count members other than the current user (those they'd actually notify)
+          member_count: (g.group_members ?? []).filter((m: any) => m.user_id !== user!.id).length,
+        })),
+      )
+    }
+    fetchGroups()
+  }, [user])
 
   const toggleAllCourses = () => {
     if (allCourses) {
@@ -185,6 +217,7 @@ export default function StartRound() {
       courseIds: Array.from(selectedCourseIds),
       spots,
       invitedUsers,
+      notifyGroupIds: Array.from(notifyGroupIds),
     })
 
     navigate('/start/available')
@@ -425,6 +458,46 @@ export default function StartRound() {
         selectedUsers={invitedUsers}
         onSelectionChange={setInvitedUsers}
       />
+
+      {/* ── Notify a group (soft broadcast — doesn't pre-create RSVPs) ── */}
+      {myGroups.length > 0 && (
+        <section className="space-y-2">
+          <h3 className="text-xs font-body font-semibold uppercase tracking-widest text-muted-foreground">
+            Notify a group
+          </h3>
+          <p className="text-xs font-body text-muted-foreground -mt-1">
+            We'll send a "want to join?" email to anyone in the group who isn't already on this round.
+          </p>
+          <div className="space-y-1.5">
+            {myGroups.map(g => (
+              <label
+                key={g.id}
+                className="flex items-center gap-2.5 cursor-pointer select-none px-1 py-1"
+              >
+                <input
+                  type="checkbox"
+                  checked={notifyGroupIds.has(g.id)}
+                  onChange={e => {
+                    setNotifyGroupIds(prev => {
+                      const next = new Set(prev)
+                      if (e.target.checked) next.add(g.id)
+                      else next.delete(g.id)
+                      return next
+                    })
+                  }}
+                  className="w-4 h-4 rounded border-border accent-primary"
+                />
+                <span className="text-sm font-body text-foreground">
+                  {g.name}{' '}
+                  <span className="text-muted-foreground">
+                    ({g.member_count} {g.member_count === 1 ? 'member' : 'members'})
+                  </span>
+                </span>
+              </label>
+            ))}
+          </div>
+        </section>
+      )}
 
       {/* ── Confirm summary ── */}
       <section className="space-y-3">
