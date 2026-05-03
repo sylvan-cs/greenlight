@@ -2251,9 +2251,17 @@ def _notify(all_results, config):
 
 
 def _format_time_ampm(time_24):
-    """Convert 'HH:MM' to '7:30 AM' format."""
+    """Convert 'HH:MM' or 'HH:MM:SS' to '7:30 AM' format.
+
+    Postgres returns TIME columns as 'HH:MM:SS' even when stored without
+    seconds, so we accept both. Empty/None falls through to the raw value.
+    """
+    if not time_24:
+        return time_24
+    # Strip any seconds portion before parsing.
+    hhmm = time_24[:5] if len(time_24) >= 5 else time_24
     try:
-        dt = datetime.strptime(time_24, "%H:%M")
+        dt = datetime.strptime(hhmm, "%H:%M")
         return dt.strftime("%I:%M %p").lstrip("0")
     except Exception:
         return time_24
@@ -2287,6 +2295,14 @@ def _haversine_miles(lat1, lng1, lat2, lng2):
     dlng = math.radians(lng2 - lng1)
     a = math.sin(dlat/2)**2 + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlng/2)**2
     return R * 2 * math.asin(math.sqrt(a))
+
+
+def _build_short_url(round_data):
+    """Compact share URL for SMS body. Falls back to the bare domain if
+    the round has no share_code (legacy rows).
+    """
+    code = round_data.get("share_code") if isinstance(round_data, dict) else None
+    return f"https://thestarter.golf/r/{code}" if code else "https://thestarter.golf"
 
 
 def _send_sms(api_key, from_phone, to_phone, message):
@@ -2947,11 +2963,11 @@ def _send_final_reminders(sb, all_courses, from_email, telnyx_api_key="", telnyx
                         cprof = None
                     if cprof and cprof.get("phone") and cprof.get("sms_opt_in"):
                         best_s = email_suggestions[0]
+                        short_url = _build_short_url(r)
+                        spots_str = f" ({best_s['spots_display']} spots)" if best_s.get("spots_display") else ""
                         sms_msg = (
-                            f"⏰ Last call: {best_s['time_display']} at "
-                            f"{best_s['course_name']} — {best_s['date_short']}"
-                            f" ({best_s['spots_display'] or '?'} spots)\n"
-                            f"Book: {best_s['booking_url']}\n- The Starter"
+                            f"Last call: {best_s['time_display']} {best_s['date_short']} "
+                            f"at {best_s['course_name']}{spots_str}\n{short_url}"
                         )
                         _send_sms(telnyx_api_key, telnyx_phone, cprof["phone"], sms_msg)
         except Exception as e:
@@ -3317,16 +3333,18 @@ def _check_round_matches():
                             [s["tee_time"]["id"] for s in suggestions],
                         )
 
-                # SMS to creator
+                # SMS to creator. Body is tuned to fit in a single GSM-7
+                # SMS part (160 chars) \u2014 no emoji, no em-dash, short URL.
+                # Going over splits into multi-part SMS which each cost
+                # separately and look weird on some carriers.
                 if creator and creator.get("phone") and creator.get("sms_opt_in") and telnyx_api_key and telnyx_phone and sms_sent < MAX_SMS_PER_CYCLE:
-                    lead = "\u26a1 Stand-by alert" if is_standby_round else "\u26f3 Tee time found"
+                    short_url = _build_short_url(round_data)
+                    lead = "Stand-by alert" if is_standby_round else "Tee time found"
+                    spots_str = f" ({best_s['spots_display']} spots)" if best_s.get("spots_display") else ""
                     sms_msg = (
-                        f"{lead}: {best_s['time_display']} at {best_s['course_name']} on {date_display}"
-                        f" \u2014 {best_s['spots_display'] or '?'} spots\n"
+                        f"{lead}: {best_s['time_display']} {date_display} "
+                        f"at {best_s['course_name']}{spots_str}\n{short_url}"
                     )
-                    if watcher_count > 0:
-                        sms_msg += f"{watcher_count} of your group {'is' if watcher_count == 1 else 'are'} also watching.\n"
-                    sms_msg += f"Book: {best_s['booking_url']}\n- The Starter"
                     if _send_sms(telnyx_api_key, telnyx_phone, creator["phone"], sms_msg):
                         sms_sent += 1
 
@@ -3369,14 +3387,15 @@ def _check_round_matches():
                                 [s["tee_time"]["id"] for s in suggestions],
                             )
 
-                    # SMS to co-watcher
+                    # SMS to co-watcher (tight, 1-part GSM-7)
                     if telnyx_api_key and telnyx_phone and sms_sent < MAX_SMS_PER_CYCLE:
                         if rsvp_profile and rsvp_profile.get("phone") and rsvp_profile.get("sms_opt_in"):
+                            short_url = _build_short_url(round_data)
+                            spots_str = f" ({best_s['spots_display']} spots)" if best_s.get("spots_display") else ""
                             rsvp_sms = (
-                                f"\u26f3 {best_s['time_display']} at {best_s['course_name']} on {date_display}"
-                                f" \u2014 {best_s['spots_display'] or '?'} spots\n"
-                                f"{creator_first} is watching too \u2014 first to book gets it.\n"
-                                f"Book: {best_s['booking_url']}\n- The Starter"
+                                f"Tee time: {best_s['time_display']} {date_display} "
+                                f"at {best_s['course_name']}{spots_str}. "
+                                f"{creator_first} is watching too - first to book gets it.\n{short_url}"
                             )
                             if _send_sms(telnyx_api_key, telnyx_phone, rsvp_profile["phone"], rsvp_sms):
                                 sms_sent += 1
