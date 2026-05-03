@@ -2247,8 +2247,15 @@ def _send_sms(api_key, from_phone, to_phone, message):
 def _send_match_email(to_email, suggestions, round_id,
                       extra_line="",
                       from_email="The Starter <teetimes@thestarter.golf>",
-                      searched_courses=None):
-    """Send match notification email with up to 3 ranked suggestions via Resend."""
+                      searched_courses=None,
+                      notification_type="match"):
+    """Send match notification email with up to 3 ranked suggestions via Resend.
+
+    notification_type controls the subject line:
+      'match'    \u2013 first time we've found options for this round
+      'followup' \u2013 round is still being watched; these are NEW options
+      'final'    \u2013 round_date is within 24h, last-call reminder
+    """
     api_key = os.environ.get("RESEND_API_KEY", "")
     to_email = os.environ.get("NOTIFY_EMAIL") or to_email
     if not api_key or api_key.startswith("re_YOUR"):
@@ -2256,7 +2263,12 @@ def _send_match_email(to_email, suggestions, round_id,
         return False
 
     best = suggestions[0]
-    subject = f"\u26f3 Tee time found! {best['time_display']} at {best['course_name']}"
+    if notification_type == "followup":
+        subject = f"\u26f3 New tee times for your round \u2014 {best['time_display']} at {best['course_name']}"
+    elif notification_type == "final":
+        subject = f"\u23f0 Last call: {best['time_display']} at {best['course_name']} tomorrow"
+    else:
+        subject = f"\u26f3 Tee time found! {best['time_display']} at {best['course_name']}"
 
     lines = ["\u26f3 Tee time found for your round!\n"]
     if extra_line:
@@ -2380,6 +2392,322 @@ def _send_rsvp_email(to_email, creator_name, suggestions,
     except Exception as e:
         print(f"    Email send failed: {e}")
         return False
+
+
+def _log_round_notification(sb, round_id, recipient_email, notif_type, tee_time_ids):
+    """Insert a row into round_notifications. Best-effort — never raises."""
+    if not recipient_email:
+        return
+    try:
+        sb.table("round_notifications").insert({
+            "round_id": round_id,
+            "recipient_email": recipient_email.lower(),
+            "notification_type": notif_type,
+            "tee_time_ids": list(tee_time_ids) if tee_time_ids else [],
+        }).execute()
+    except Exception as e:
+        print(f"    Warning: failed to log round_notification: {e}")
+
+
+def _get_notified_tee_time_ids(sb, round_id, recipient_email):
+    """Set of tee_time UUIDs already notified to this recipient for this round."""
+    if not recipient_email:
+        return set()
+    try:
+        resp = (
+            sb.table("round_notifications")
+            .select("tee_time_ids")
+            .eq("round_id", round_id)
+            .eq("recipient_email", recipient_email.lower())
+            .execute()
+        )
+        ids = set()
+        for row in (resp.data or []):
+            for tid in (row.get("tee_time_ids") or []):
+                ids.add(tid)
+        return ids
+    except Exception:
+        return set()
+
+
+def _hours_since_last_notification(sb, round_id, recipient_email):
+    """Hours since the most recent notification, or None if never notified."""
+    if not recipient_email:
+        return None
+    try:
+        resp = (
+            sb.table("round_notifications")
+            .select("sent_at")
+            .eq("round_id", round_id)
+            .eq("recipient_email", recipient_email.lower())
+            .order("sent_at", desc=True)
+            .limit(1)
+            .execute()
+        )
+        rows = resp.data or []
+        if not rows:
+            return None
+        sent_at = datetime.fromisoformat(rows[0]["sent_at"].replace("Z", "+00:00"))
+        delta = datetime.now(timezone.utc) - sent_at
+        return delta.total_seconds() / 3600
+    except Exception:
+        return None
+
+
+def _has_final_reminder_been_sent(sb, round_id, recipient_email):
+    """True if a 'final' notification has been logged for this round + recipient."""
+    if not recipient_email:
+        return False
+    try:
+        resp = (
+            sb.table("round_notifications")
+            .select("id")
+            .eq("round_id", round_id)
+            .eq("recipient_email", recipient_email.lower())
+            .eq("notification_type", "final")
+            .limit(1)
+            .execute()
+        )
+        return bool(resp.data)
+    except Exception:
+        return False
+
+
+def _build_email_suggestions(tee_times, round_data, all_courses, match_label="Your time", match_type="exact"):
+    """Convert raw tee_times rows into the dict shape _send_match_email expects.
+    Used by the follow-up and final-reminder passes which don't run the full
+    flex/radius logic — just exact-window matches against the round's courses.
+    """
+    spots_needed = round_data.get("spots_needed", 1)
+    date_long = _format_date_long(round_data["round_date"])
+    date_short = _format_date_friendly(round_data["round_date"])
+    out = []
+    for tt in tee_times:
+        course_info = all_courses.get(tt["course_id"], {})
+        out.append({
+            "course_name": course_info.get("name", "Unknown Course"),
+            "time_display": _format_time_ampm(tt["tee_time"]),
+            "date_long": date_long,
+            "date_short": date_short,
+            "price_display": tt.get("price_label", ""),
+            "spots_display": tt.get("spots_available"),
+            "match_label": match_label,
+            "match_type": match_type,
+            "booking_url": tt.get("booking_link") or course_info.get("booking_url", ""),
+            "players": str(spots_needed),
+        })
+    return out
+
+
+def _diversify_tee_times(tee_times, cap=3):
+    """One per course first, then duplicates only if fewer than `cap` unique courses."""
+    seen = set()
+    primary, fallback = [], []
+    for tt in tee_times:
+        cid = tt.get("course_id")
+        if cid not in seen:
+            seen.add(cid)
+            primary.append(tt)
+        else:
+            fallback.append(tt)
+    return (primary + fallback)[:cap]
+
+
+def _query_round_matches(sb, round_data, all_courses):
+    """Exact-window matches for a round against its selected courses.
+    Returns a list of available tee_time rows (no diversification, no caps).
+    """
+    course_ids = [rc["course_id"] for rc in (round_data.get("round_courses") or []) if rc.get("course_id")]
+    if not course_ids:
+        return []
+    spots_needed = round_data.get("spots_needed", 1)
+    try:
+        tt_resp = (
+            sb.table("tee_times")
+            .select("*")
+            .in_("course_id", course_ids)
+            .eq("tee_date", round_data["round_date"])
+            .gte("tee_time", round_data["time_window_start"])
+            .lte("tee_time", round_data["time_window_end"])
+            .eq("is_available", True)
+            .order("tee_time")
+            .limit(20)
+            .execute()
+        )
+    except Exception as e:
+        print(f"    query_round_matches failed for {round_data.get('id')}: {e}")
+        return []
+    return [
+        tt for tt in (tt_resp.data or [])
+        if tt.get("spots_available") is None or tt["spots_available"] >= spots_needed
+    ]
+
+
+def _get_creator_email(sb, creator_id):
+    """Fetch a user's auth email by id. Returns None if unavailable."""
+    if not creator_id:
+        return None
+    try:
+        resp = sb.auth.admin.get_user_by_id(creator_id)
+        return resp.user.email if resp and resp.user else None
+    except Exception:
+        return None
+
+
+def _send_followup_notifications(sb, all_courses, from_email):
+    """Pass 2: send 12h+ follow-up emails for 'found' rounds with NEW available tee times.
+
+    A round qualifies if:
+      - status='found' (already had its first match)
+      - round_date is today or future
+      - last notification to the creator was >= 12 hours ago
+      - At least one currently-available tee time in the round's window has not
+        been included in any prior notification to that creator
+    """
+    today = datetime.now().strftime("%Y-%m-%d")
+    try:
+        rounds_resp = (
+            sb.table("rounds")
+            .select("*, round_courses(course_id), share_code, creator_id")
+            .eq("status", "found")
+            .gte("round_date", today)
+            .execute()
+        )
+    except Exception as e:
+        print(f"  Followup pass: query failed: {e}")
+        return
+
+    rounds = rounds_resp.data or []
+    if not rounds:
+        return
+
+    print(f"  Follow-up pass: scanning {len(rounds)} 'found' rounds for new options")
+    sent = 0
+    for r in rounds:
+        try:
+            round_id = r["id"]
+            creator_email = _get_creator_email(sb, r.get("creator_id"))
+            if not creator_email:
+                continue
+
+            hours = _hours_since_last_notification(sb, round_id, creator_email)
+            if hours is None or hours < 12:
+                continue
+
+            current = _query_round_matches(sb, r, all_courses)
+            if not current:
+                continue
+
+            notified = _get_notified_tee_time_ids(sb, round_id, creator_email)
+            new_matches = [tt for tt in current if tt["id"] not in notified]
+            if not new_matches:
+                continue
+
+            chosen = _diversify_tee_times(new_matches, cap=3)
+            email_suggestions = _build_email_suggestions(
+                chosen, r, all_courses, match_label="New option since last email",
+            )
+            course_ids = [rc["course_id"] for rc in (r.get("round_courses") or []) if rc.get("course_id")]
+            searched = sorted({
+                all_courses[cid]["name"]
+                for cid in course_ids
+                if cid in all_courses and all_courses[cid].get("name")
+            })
+
+            extra = (
+                "We're still watching your round and new options have opened up. "
+                "Click any below to book, or open the round to keep watching."
+            )
+            if _send_match_email(
+                creator_email, email_suggestions, round_id,
+                extra_line=extra,
+                from_email=from_email,
+                searched_courses=searched,
+                notification_type="followup",
+            ):
+                _log_round_notification(
+                    sb, round_id, creator_email, "followup",
+                    [tt["id"] for tt in chosen],
+                )
+                sent += 1
+        except Exception as e:
+            print(f"  Follow-up for round {r.get('id')} failed: {e}")
+    if sent:
+        print(f"  Follow-up pass: sent {sent} follow-up email(s)")
+
+
+def _send_final_reminders(sb, all_courses, from_email):
+    """Pass 3: 'last call' email when round_date is within 24 hours.
+
+    Sent at most once per (round, creator). Fires whether or not new tee
+    times exist — the point is a final nudge with current top options.
+    """
+    now = datetime.now()
+    today_str = now.strftime("%Y-%m-%d")
+    tomorrow_str = (now + timedelta(days=1)).strftime("%Y-%m-%d")
+    try:
+        rounds_resp = (
+            sb.table("rounds")
+            .select("*, round_courses(course_id), share_code, creator_id")
+            .in_("status", ["watching", "found"])
+            .gte("round_date", today_str)
+            .lte("round_date", tomorrow_str)
+            .execute()
+        )
+    except Exception as e:
+        print(f"  Final reminder pass: query failed: {e}")
+        return
+
+    rounds = rounds_resp.data or []
+    if not rounds:
+        return
+
+    print(f"  Final reminder pass: scanning {len(rounds)} round(s) within 24h")
+    sent = 0
+    for r in rounds:
+        try:
+            round_id = r["id"]
+            creator_email = _get_creator_email(sb, r.get("creator_id"))
+            if not creator_email:
+                continue
+
+            if _has_final_reminder_been_sent(sb, round_id, creator_email):
+                continue
+
+            current = _query_round_matches(sb, r, all_courses)
+            if not current:
+                # Still send a "no times found, last chance to book elsewhere"
+                # message? For now skip — empty inbox > misleading email.
+                continue
+
+            chosen = _diversify_tee_times(current, cap=3)
+            email_suggestions = _build_email_suggestions(
+                chosen, r, all_courses, match_label="Top option right now",
+            )
+            course_ids = [rc["course_id"] for rc in (r.get("round_courses") or []) if rc.get("course_id")]
+            searched = sorted({
+                all_courses[cid]["name"]
+                for cid in course_ids
+                if cid in all_courses and all_courses[cid].get("name")
+            })
+
+            extra = "Last call — your round is in less than 24 hours. Here are the best current options:"
+            if _send_match_email(
+                creator_email, email_suggestions, round_id,
+                extra_line=extra,
+                from_email=from_email,
+                searched_courses=searched,
+                notification_type="final",
+            ):
+                _log_round_notification(
+                    sb, round_id, creator_email, "final",
+                    [tt["id"] for tt in chosen],
+                )
+                sent += 1
+        except Exception as e:
+            print(f"  Final reminder for round {r.get('id')} failed: {e}")
+    if sent:
+        print(f"  Final reminder pass: sent {sent} final reminder email(s)")
 
 
 def _check_round_matches():
@@ -2679,12 +3007,16 @@ def _check_round_matches():
 
                 if creator_email and (not creator or creator.get("email_opt_in", True)):
                     watcher_line = f"{watcher_count} of your group {'is' if watcher_count == 1 else 'are'} also watching." if watcher_count > 0 else ""
-                    _send_match_email(
+                    if _send_match_email(
                         creator_email, email_suggestions, round_id,
                         extra_line=watcher_line,
                         from_email=from_email,
                         searched_courses=searched_course_names,
-                    )
+                    ):
+                        _log_round_notification(
+                            sb, round_id, creator_email, "match",
+                            [s["tee_time"]["id"] for s in suggestions],
+                        )
 
                 # SMS to creator
                 if creator and creator.get("phone") and creator.get("sms_opt_in") and telnyx_api_key and telnyx_phone and sms_sent < MAX_SMS_PER_CYCLE:
@@ -2725,13 +3057,17 @@ def _check_round_matches():
 
                     # Email co-watcher with booking link
                     if rsvp_email and (not rsvp_profile or rsvp_profile.get("email_opt_in", True)):
-                        _send_rsvp_email(
+                        if _send_rsvp_email(
                             rsvp_email, creator_first, email_suggestions,
                             round_data["share_code"],
                             extra_line=f"{creator_first} is watching too \u2014 first to book gets it.",
                             from_email=from_email,
                             searched_courses=searched_course_names,
-                        )
+                        ):
+                            _log_round_notification(
+                                sb, round_id, rsvp_email, "match",
+                                [s["tee_time"]["id"] for s in suggestions],
+                            )
 
                     # SMS to co-watcher
                     if telnyx_api_key and telnyx_phone and sms_sent < MAX_SMS_PER_CYCLE:
@@ -2772,18 +3108,34 @@ def _check_round_matches():
                         pass
 
                     if rsvp_email and (not rsvp_profile or rsvp_profile.get("email_opt_in", True)):
-                        _send_rsvp_email(
+                        if _send_rsvp_email(
                             rsvp_email, creator_first, email_suggestions,
                             round_data["share_code"],
                             from_email=from_email,
                             searched_courses=searched_course_names,
-                        )
+                        ):
+                            _log_round_notification(
+                                sb, round_id, rsvp_email, "match",
+                                [s["tee_time"]["id"] for s in suggestions],
+                            )
 
             except Exception as e:
                 rid = round_data.get("id", "<no id>")
                 print(f"  Round {rid} processing failed: {e}")
                 continue
         print(f"  Matching complete. {sms_sent} SMS sent this cycle.")
+
+        # Pass 2: 12h+ follow-up emails for 'found' rounds with new options
+        try:
+            _send_followup_notifications(sb, all_courses, from_email)
+        except Exception as e:
+            print(f"  Follow-up pass error: {e}")
+
+        # Pass 3: final reminders for rounds within 24h of tee time
+        try:
+            _send_final_reminders(sb, all_courses, from_email)
+        except Exception as e:
+            print(f"  Final reminder pass error: {e}")
 
     except Exception as e:
         print(f"\nMatching error: {e}")
