@@ -3271,6 +3271,7 @@ def _check_round_matches():
 
 
 if __name__ == "__main__":
+    import time
     parser = argparse.ArgumentParser(description="GreenLight Tee Time Scanner")
     parser.add_argument("--all", action="store_true", help="Scan ALL courses, ignore config")
     parser.add_argument(
@@ -3278,7 +3279,36 @@ if __name__ == "__main__":
         action="store_true",
         help="Stand-by poll: fast, scoped to courses+dates needed by standby_mode rounds only",
     )
+    parser.add_argument(
+        "--loop",
+        action="store_true",
+        help="Run forever, sleeping --interval-seconds between cycles. Use when deployed as "
+             "an always-on Railway service rather than via cron (Railway's cron min is 5 min, "
+             "which is too slow for stand-by polling).",
+    )
+    parser.add_argument(
+        "--interval-seconds",
+        type=int,
+        default=90,
+        help="Seconds to sleep between iterations when --loop is set. Default 90s.",
+    )
     args = parser.parse_args()
     if args.standby and args.all:
         parser.error("--standby and --all are mutually exclusive")
-    run(scan_all=args.all, standby_only=args.standby)
+
+    if args.loop:
+        interval = max(30, args.interval_seconds)  # never tighter than 30s — be polite to APIs
+        print(f"Loop mode: cycle every {interval}s")
+        while True:
+            cycle_start = time.time()
+            try:
+                run(scan_all=args.all, standby_only=args.standby)
+            except Exception as e:
+                print(f"Loop cycle errored: {e}")
+            elapsed = time.time() - cycle_start
+            sleep_for = max(0, interval - elapsed)
+            if sleep_for > 0:
+                print(f"Loop: sleeping {sleep_for:.1f}s until next cycle")
+                time.sleep(sleep_for)
+    else:
+        run(scan_all=args.all, standby_only=args.standby)
