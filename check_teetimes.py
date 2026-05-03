@@ -3080,6 +3080,30 @@ def _check_round_matches():
                 if not suggestions:
                     continue
 
+                is_standby_round = bool(round_data.get("standby_mode"))
+
+                # Stand-by mode: don't lock the round at first match. Instead,
+                # filter out tee_times that have already been notified to the
+                # creator so each new cancellation/opening triggers a fresh
+                # alert. Round stays in 'watching' forever until booked,
+                # cancelled, or its date passes.
+                if is_standby_round:
+                    # We need creator_email to scope the dedup query — fetch
+                    # it now before the email-build block below uses it.
+                    sb_creator_email = None
+                    try:
+                        _u = sb.auth.admin.get_user_by_id(round_data["creator_id"])
+                        sb_creator_email = _u.user.email if _u and _u.user else None
+                    except Exception:
+                        pass
+                    if sb_creator_email:
+                        already_notified = _get_notified_tee_time_ids(sb, round_id, sb_creator_email)
+                        suggestions = [s for s in suggestions if s["tee_time"]["id"] not in already_notified]
+                        if not suggestions:
+                            # Every available slot has already been alerted on —
+                            # nothing new this cycle.
+                            continue
+
                 # Diversify: prefer one suggestion per course before duplicates from
                 # the same course. Otherwise the earliest 3 tee_times often all come
                 # from one course (e.g. Rock Spring at 6:00/6:08/6:16) and the user
@@ -3105,15 +3129,19 @@ def _check_round_matches():
                 best = suggestions[0]
                 match = best["tee_time"]
 
-                print(f"  Round {round_id} matched with tee time {match['id']} ({best['match_type']})")
+                print(f"  Round {round_id} matched with tee time {match['id']} ({best['match_type']}){' [standby]' if is_standby_round else ''}")
 
-                # Update round status
-                now_iso = datetime.now(timezone.utc).isoformat()
-                sb.table("rounds").update({
-                    "matched_tee_time_id": match["id"],
-                    "status": "found",
-                    "matched_at": now_iso,
-                }).eq("id", round_id).execute()
+                # Update round status — but ONLY for non-standby rounds. Stand-by
+                # rounds intentionally stay in 'watching' so each new cancellation
+                # gets its own alert; the dedup check above prevents duplicate
+                # notifications for the same tee_time.
+                if not is_standby_round:
+                    now_iso = datetime.now(timezone.utc).isoformat()
+                    sb.table("rounds").update({
+                        "matched_tee_time_id": match["id"],
+                        "status": "found",
+                        "matched_at": now_iso,
+                    }).eq("id", round_id).execute()
 
                 # Build suggestion dicts for email. Each tee_time may be on a
                 # different date in multi-date rounds — use the tee_time's own
