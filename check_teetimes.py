@@ -2639,6 +2639,21 @@ def _query_round_matches(sb, round_data, all_courses):
     Reads dates from round_dates if present; falls back to the legacy
     rounds.round_date for older rounds.
     """
+    return _query_round_matches_ex(sb, round_data, all_courses, include_nearby=False)
+
+
+def _query_round_matches_ex(sb, round_data, all_courses, include_nearby=False):
+    """Same as _query_round_matches but with optional nearby-course expansion.
+
+    When include_nearby=True, also pulls available tee_times from courses
+    within the creator's course_radius_miles preference whose lat/lng is in
+    all_courses. The returned list has preferred-course matches first, then
+    nearby — caller is responsible for diversification + capping.
+
+    Used by _send_final_reminders which expands to nearby for last-call
+    flexibility. The main matcher loop and the 12h follow-up keep their
+    own exact/flex/radius logic and don't go through this helper.
+    """
     course_ids = [rc["course_id"] for rc in (round_data.get("round_courses") or []) if rc.get("course_id")]
     if not course_ids:
         return []
@@ -2647,27 +2662,98 @@ def _query_round_matches(sb, round_data, all_courses):
     dates = _get_round_dates(sb, round_data, today_str)
     if not dates:
         return []
+    time_start = round_data["time_window_start"]
+    time_end = round_data["time_window_end"]
+
+    def _ok(tt):
+        return tt.get("spots_available") is None or tt["spots_available"] >= spots_needed
+
+    # Preferred (selected) courses
+    preferred: list = []
     try:
         tt_resp = (
             sb.table("tee_times")
             .select("*")
             .in_("course_id", course_ids)
             .in_("tee_date", dates)
-            .gte("tee_time", round_data["time_window_start"])
-            .lte("tee_time", round_data["time_window_end"])
+            .gte("tee_time", time_start)
+            .lte("tee_time", time_end)
             .eq("is_available", True)
             .order("tee_date")
             .order("tee_time")
             .limit(40)
             .execute()
         )
+        preferred = [tt for tt in (tt_resp.data or []) if _ok(tt)]
     except Exception as e:
         print(f"    query_round_matches failed for {round_data.get('id')}: {e}")
         return []
-    return [
-        tt for tt in (tt_resp.data or [])
-        if tt.get("spots_available") is None or tt["spots_available"] >= spots_needed
-    ]
+
+    if not include_nearby:
+        return preferred
+
+    # Nearby courses — within creator's course_radius_miles of any preferred course.
+    try:
+        creator_resp = (
+            sb.table("profiles")
+            .select("course_radius_miles")
+            .eq("id", round_data.get("creator_id"))
+            .single()
+            .execute()
+        )
+        radius = (creator_resp.data or {}).get("course_radius_miles") or 25
+    except Exception:
+        radius = 25
+
+    selected_coords = []
+    for cid in course_ids:
+        c = all_courses.get(cid) or {}
+        if c.get("lat") and c.get("lng"):
+            try:
+                selected_coords.append((float(c["lat"]), float(c["lng"])))
+            except (ValueError, TypeError):
+                pass
+    if not selected_coords:
+        return preferred
+
+    nearby_ids = []
+    for cid, c in all_courses.items():
+        if cid in course_ids:
+            continue
+        if not c.get("lat") or not c.get("lng"):
+            continue
+        try:
+            clat, clng = float(c["lat"]), float(c["lng"])
+        except (ValueError, TypeError):
+            continue
+        min_dist = min(_haversine_miles(slat, slng, clat, clng) for slat, slng in selected_coords)
+        if min_dist <= radius:
+            nearby_ids.append(cid)
+
+    if not nearby_ids:
+        return preferred
+
+    nearby: list = []
+    try:
+        nearby_resp = (
+            sb.table("tee_times")
+            .select("*")
+            .in_("course_id", nearby_ids)
+            .in_("tee_date", dates)
+            .gte("tee_time", time_start)
+            .lte("tee_time", time_end)
+            .eq("is_available", True)
+            .order("tee_date")
+            .order("tee_time")
+            .limit(20)
+            .execute()
+        )
+        nearby = [tt for tt in (nearby_resp.data or []) if _ok(tt)]
+    except Exception as e:
+        print(f"    nearby query failed for {round_data.get('id')}: {e}")
+        nearby = []
+
+    return preferred + nearby
 
 
 def _get_creator_email(sb, creator_id):
@@ -2805,10 +2891,12 @@ def _send_final_reminders(sb, all_courses, from_email, telnyx_api_key="", telnyx
             if _has_final_reminder_been_sent(sb, round_id, creator_email):
                 continue
 
-            current = _query_round_matches(sb, r, all_courses)
+            # Final reminder expands the search to NEARBY courses too —
+            # last call, so flexibility helps. Selected courses still come
+            # first via _diversify_tee_times.
+            current = _query_round_matches_ex(sb, r, all_courses, include_nearby=True)
             if not current:
-                # Still send a "no times found, last chance to book elsewhere"
-                # message? For now skip — empty inbox > misleading email.
+                # Skip — empty inbox > misleading email.
                 continue
 
             chosen = _diversify_tee_times(current, cap=3)
@@ -2918,6 +3006,11 @@ def _check_round_matches():
                 spots_needed = round_data.get("spots_needed", 1)
                 time_start = round_data["time_window_start"]
                 time_end = round_data["time_window_end"]
+                # Whether this is a stand-by round — narrows match scope to
+                # *only* the courses the user picked (no flex-time, no nearby).
+                # Stand-by users want signal on cancellations at their target
+                # course, not "we found something at a course you didn't ask for".
+                is_standby_round = bool(round_data.get("standby_mode"))
                 # All candidate dates for this round (multi-date support).
                 # Falls back to round_data["round_date"] for legacy rounds.
                 round_dates = _get_round_dates(sb, round_data, today)
@@ -2976,7 +3069,9 @@ def _check_round_matches():
                         })
 
                 # --- 2. Flex matches (preferred courses, outside time window) ---
-                if flexibility_minutes and flexibility_minutes > 0:
+                # Stand-by rounds skip flex too — user wants exact-window-only
+                # alerts for cancellations on their target courses.
+                if not is_standby_round and flexibility_minutes and flexibility_minutes > 0:
                     # Calculate expanded window
                     try:
                         start_dt = datetime.strptime(time_start, "%H:%M")
@@ -3025,7 +3120,11 @@ def _check_round_matches():
                             })
 
                 # --- 3. Radius matches (nearby courses not in selected set) ---
-                if course_radius_miles and course_radius_miles > 0:
+                # Skip entirely for stand-by rounds — they only want alerts on
+                # their specifically-selected courses. Nearby courses are
+                # added back in by the final-reminder pass for last-call
+                # flexibility.
+                if not is_standby_round and course_radius_miles and course_radius_miles > 0:
                     # Get lat/lng of selected courses
                     selected_coords = []
                     for cid in course_ids:
@@ -3079,8 +3178,6 @@ def _check_round_matches():
 
                 if not suggestions:
                     continue
-
-                is_standby_round = bool(round_data.get("standby_mode"))
 
                 # Stand-by mode: don't lock the round at first match. Instead,
                 # filter out tee_times that have already been notified to the
@@ -3201,7 +3298,6 @@ def _check_round_matches():
                 except Exception as e:
                     print(f"    Could not get creator email: {e}")
 
-                is_standby_round = bool(round_data.get("standby_mode"))
                 if creator_email and (not creator or creator.get("email_opt_in", True)):
                     watcher_line = f"{watcher_count} of your group {'is' if watcher_count == 1 else 'are'} also watching." if watcher_count > 0 else ""
                     if _send_match_email(
