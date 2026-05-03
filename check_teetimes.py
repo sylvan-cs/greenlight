@@ -2751,11 +2751,15 @@ def _send_followup_notifications(sb, all_courses, from_email):
         print(f"  Follow-up pass: sent {sent} follow-up email(s)")
 
 
-def _send_final_reminders(sb, all_courses, from_email):
-    """Pass 3: 'last call' email when round_date is within 24 hours.
+def _send_final_reminders(sb, all_courses, from_email, telnyx_api_key="", telnyx_phone=""):
+    """Pass 3: 'last call' email + SMS when round_date is within 24 hours.
 
     Sent at most once per (round, creator). Fires whether or not new tee
     times exist — the point is a final nudge with current top options.
+
+    SMS fires alongside the email if Telnyx is configured and the creator
+    has sms_opt_in. Per product decision, SMS is sent on first-match and
+    final-reminder only — not on the 12h follow-up (too noisy on phone).
     """
     now = datetime.now()
     today_str = now.strftime("%Y-%m-%d")
@@ -2807,18 +2811,44 @@ def _send_final_reminders(sb, all_courses, from_email):
             })
 
             extra = "Last call — your round is in less than 24 hours. Here are the best current options:"
-            if _send_match_email(
+            email_ok = _send_match_email(
                 creator_email, email_suggestions, round_id,
                 extra_line=extra,
                 from_email=from_email,
                 searched_courses=searched,
                 notification_type="final",
-            ):
+            )
+            if email_ok:
                 _log_round_notification(
                     sb, round_id, creator_email, "final",
                     [tt["id"] for tt in chosen],
                 )
                 sent += 1
+
+                # Final-reminder SMS: highest-urgency notification we send,
+                # so worth a text in addition to the email. Look up the
+                # creator's phone + sms_opt_in and fire if Telnyx is wired.
+                if telnyx_api_key and telnyx_phone:
+                    try:
+                        creator_resp = (
+                            sb.table("profiles")
+                            .select("phone, sms_opt_in")
+                            .eq("id", r.get("creator_id"))
+                            .single()
+                            .execute()
+                        )
+                        cprof = creator_resp.data
+                    except Exception:
+                        cprof = None
+                    if cprof and cprof.get("phone") and cprof.get("sms_opt_in"):
+                        best_s = email_suggestions[0]
+                        sms_msg = (
+                            f"⏰ Last call: {best_s['time_display']} at "
+                            f"{best_s['course_name']} — {best_s['date_short']}"
+                            f" ({best_s['spots_display'] or '?'} spots)\n"
+                            f"Book: {best_s['booking_url']}\n- The Starter"
+                        )
+                        _send_sms(telnyx_api_key, telnyx_phone, cprof["phone"], sms_msg)
         except Exception as e:
             print(f"  Final reminder for round {r.get('id')} failed: {e}")
     if sent:
@@ -3260,9 +3290,10 @@ def _check_round_matches():
         except Exception as e:
             print(f"  Follow-up pass error: {e}")
 
-        # Pass 3: final reminders for rounds within 24h of tee time
+        # Pass 3: final reminders for rounds within 24h of tee time.
+        # SMS goes out alongside email on this pass (highest-urgency).
         try:
-            _send_final_reminders(sb, all_courses, from_email)
+            _send_final_reminders(sb, all_courses, from_email, telnyx_api_key, telnyx_phone)
         except Exception as e:
             print(f"  Final reminder pass error: {e}")
 
