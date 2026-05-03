@@ -13,6 +13,7 @@ export interface Round {
   matched_tee_time_id: string | null
   matched_at: string | null
   created_at: string
+  standby_mode?: boolean
 }
 
 export interface Course {

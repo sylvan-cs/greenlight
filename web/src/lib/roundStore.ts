@@ -15,6 +15,7 @@ export interface InvitedUser {
 }
 
 export const MAX_ROUND_DATES = 7
+export const MAX_STANDBY_ROUNDS_PER_USER = 3
 
 export interface RoundDraft {
   /** Earliest selected date — kept for backward compat, mirrors `dates[0]`. */
@@ -30,6 +31,8 @@ export interface RoundDraft {
   invitedUsers: InvitedUser[]
   /** Group IDs to "notify" (soft broadcast — does NOT pre-create RSVPs). */
   notifyGroupIds: string[]
+  /** Stand-by mode: opt into the fast-poll alert path for hard-to-get courses. */
+  standbyMode: boolean
 }
 
 /** Compute the combined start/end from selected day parts */
@@ -62,6 +65,7 @@ let draft: RoundDraft = {
   spots: 4,
   invitedUsers: [],
   notifyGroupIds: [],
+  standbyMode: false,
 }
 
 export function getDraft(): RoundDraft {
@@ -108,5 +112,6 @@ export function resetDraft() {
     spots: 4,
     invitedUsers: [],
     notifyGroupIds: [],
+    standbyMode: false,
   }
 }

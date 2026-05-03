@@ -90,7 +90,7 @@ export default function StartRoundWho() {
     const datesArr = (draft.dates && draft.dates.length > 0 ? [...draft.dates] : [draft.date]).sort()
     const earliestDate = datesArr[0]
 
-    const { data: round, error: roundError } = await supabase
+    const { data: round, error: roundError } = await (supabase as any)
       .from('rounds')
       .insert({
         creator_id: user.id,
@@ -103,6 +103,7 @@ export default function StartRoundWho() {
         specific_course_id: hasSpecific ? selectedTime.course_id : null,
         share_code: shareCode,
         status: forceWatch ? 'watching' : 'open',
+        standby_mode: !!draft.standbyMode,
       })
       .select('*')
       .single() as unknown as { data: Round | null; error: { message: string } | null }

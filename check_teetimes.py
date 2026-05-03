@@ -254,6 +254,70 @@ def _filter_courses(courses, config):
     return [c for c in courses if course_flags.get(c["key"], {}).get("enabled", False)]
 
 
+def _standby_filter_courses_and_dates(courses):
+    """Restrict courses + DATES_TO_CHECK to what standby-mode rounds need.
+
+    Returns (filtered_courses, dates_to_check) tuple. If no standby rounds
+    are active, returns ([], []) so the caller can no-op.
+
+    Different from _demand_filter_courses: that one widens to anything any
+    user has shown interest in. This one is strict — only courses+dates
+    referenced by at least one active standby round.
+    """
+    supabase_url = os.environ.get("SUPABASE_URL", "")
+    supabase_key = os.environ.get("SUPABASE_SERVICE_KEY", "")
+    if not supabase_url or not supabase_key:
+        return [], []
+
+    try:
+        from supabase import create_client
+        sb = create_client(supabase_url, supabase_key)
+        today = datetime.now().strftime("%Y-%m-%d")
+
+        rounds_resp = (
+            sb.table("rounds")
+            .select("id, round_date, round_courses(course_id), round_dates(round_date)")
+            .eq("standby_mode", True)
+            .in_("status", ["open", "watching"])
+            .eq("has_specific_time", False)
+            .is_("matched_tee_time_id", "null")
+            .gte("round_date", today)
+            .execute()
+        )
+
+        active_uuids = set()
+        active_dates = set()
+        for r in (rounds_resp.data or []):
+            for rc in (r.get("round_courses") or []):
+                if rc.get("course_id"):
+                    active_uuids.add(rc["course_id"])
+            # Prefer round_dates junction; fall back to legacy single date
+            rd_rows = r.get("round_dates") or []
+            if rd_rows:
+                for rd in rd_rows:
+                    d = rd.get("round_date")
+                    if d and d >= today:
+                        active_dates.add(d)
+            else:
+                d = r.get("round_date")
+                if d and d >= today:
+                    active_dates.add(d)
+
+        if not active_uuids or not active_dates:
+            return [], []
+
+        courses_resp = sb.table("courses").select("id, slug").in_("id", list(active_uuids)).execute()
+        active_slugs = {c["slug"] for c in (courses_resp.data or []) if c.get("slug")}
+
+        filtered = [c for c in courses if COURSE_SLUG_MAP.get(c["key"]) in active_slugs]
+        dates_sorted = sorted(active_dates)
+        dates_to_check = [(d, d) for d in dates_sorted]
+        return filtered, dates_to_check
+    except Exception as e:
+        print(f"  Stand-by filter failed: {e}")
+        return [], []
+
+
 def _demand_filter_courses(courses):
     """Narrow `courses` to those any user actually cares about.
 
@@ -352,26 +416,34 @@ def _build_dates_to_check():
     print(f"  Dates to check: {', '.join(d for _, d in DATES_TO_CHECK)}")
 
 
-def run(scan_all=False):
+def run(scan_all=False, standby_only=False):
+    global DATES_TO_CHECK
     config = _load_config()
 
-    if scan_all:
+    if standby_only:
+        active_courses = _filter_courses(COURSES, config)
+        active_courses, dates_to_check = _standby_filter_courses_and_dates(active_courses)
+        if not active_courses or not dates_to_check:
+            print("Stand-by poll: no active stand-by rounds. Skipping.")
+            return
+        DATES_TO_CHECK = dates_to_check
+        print("GreenLight - Stand-by poll (fast cycle)")
+        print(f"  Polling {len(active_courses)} course(s) over {len(dates_to_check)} date(s)")
+    elif scan_all:
         active_courses = list(COURSES)
         print("GreenLight - Tee Time Availability Checker (--all mode)")
+        _build_dates_to_check()
     else:
         active_courses = _filter_courses(COURSES, config)
         print("GreenLight - Tee Time Availability Checker")
+        _build_dates_to_check()
+        # Demand-driven filter: only scrape courses with active rounds or user
+        # preferences referencing them. Saves ~30% runtime when CA courses (or
+        # any other unused ones) sit idle. Bypassed by --all and --standby.
+        active_courses = _demand_filter_courses(active_courses)
 
     print(f"Starting scan on {_RUNNER}")
     print(f"Run: {datetime.now().isoformat()}")
-    _build_dates_to_check()
-
-    # Demand-driven filter: only scrape courses with active rounds or user
-    # preferences referencing them. Saves ~30% runtime when CA courses (or
-    # any other unused ones) sit idle. Bypassed by --all.
-    if not scan_all:
-        active_courses = _demand_filter_courses(active_courses)
-
     print(f"Courses: {len(active_courses)} of {len(COURSES)} enabled\n")
 
     if not active_courses:
@@ -2248,13 +2320,17 @@ def _send_match_email(to_email, suggestions, round_id,
                       extra_line="",
                       from_email="The Starter <teetimes@thestarter.golf>",
                       searched_courses=None,
-                      notification_type="match"):
+                      notification_type="match",
+                      is_standby=False):
     """Send match notification email with up to 3 ranked suggestions via Resend.
 
     notification_type controls the subject line:
       'match'    \u2013 first time we've found options for this round
       'followup' \u2013 round is still being watched; these are NEW options
       'final'    \u2013 round_date is within 24h, last-call reminder
+
+    is_standby=True overrides with the high-urgency stand-by alert subject \u2014
+    used only on first-match for rounds with rounds.standby_mode = true.
     """
     api_key = os.environ.get("RESEND_API_KEY", "")
     to_email = os.environ.get("NOTIFY_EMAIL") or to_email
@@ -2263,7 +2339,9 @@ def _send_match_email(to_email, suggestions, round_id,
         return False
 
     best = suggestions[0]
-    if notification_type == "followup":
+    if is_standby and notification_type == "match":
+        subject = f"\u26a1 Stand-by alert: {best['time_display']} at {best['course_name']} just opened"
+    elif notification_type == "followup":
         subject = f"\u26f3 New tee times for your round \u2014 {best['time_display']} at {best['course_name']}"
     elif notification_type == "final":
         subject = f"\u23f0 Last call: {best['time_display']} at {best['course_name']} tomorrow"
@@ -3053,6 +3131,7 @@ def _check_round_matches():
                 except Exception as e:
                     print(f"    Could not get creator email: {e}")
 
+                is_standby_round = bool(round_data.get("standby_mode"))
                 if creator_email and (not creator or creator.get("email_opt_in", True)):
                     watcher_line = f"{watcher_count} of your group {'is' if watcher_count == 1 else 'are'} also watching." if watcher_count > 0 else ""
                     if _send_match_email(
@@ -3060,6 +3139,7 @@ def _check_round_matches():
                         extra_line=watcher_line,
                         from_email=from_email,
                         searched_courses=searched_course_names,
+                        is_standby=is_standby_round,
                     ):
                         _log_round_notification(
                             sb, round_id, creator_email, "match",
@@ -3068,8 +3148,9 @@ def _check_round_matches():
 
                 # SMS to creator
                 if creator and creator.get("phone") and creator.get("sms_opt_in") and telnyx_api_key and telnyx_phone and sms_sent < MAX_SMS_PER_CYCLE:
+                    lead = "\u26a1 Stand-by alert" if is_standby_round else "\u26f3 Tee time found"
                     sms_msg = (
-                        f"\u26f3 {best_s['time_display']} at {best_s['course_name']} on {date_display}"
+                        f"{lead}: {best_s['time_display']} at {best_s['course_name']} on {date_display}"
                         f" \u2014 {best_s['spots_display'] or '?'} spots\n"
                     )
                     if watcher_count > 0:
@@ -3192,5 +3273,12 @@ def _check_round_matches():
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="GreenLight Tee Time Scanner")
     parser.add_argument("--all", action="store_true", help="Scan ALL courses, ignore config")
+    parser.add_argument(
+        "--standby",
+        action="store_true",
+        help="Stand-by poll: fast, scoped to courses+dates needed by standby_mode rounds only",
+    )
     args = parser.parse_args()
-    run(scan_all=args.all)
+    if args.standby and args.all:
+        parser.error("--standby and --all are mutually exclusive")
+    run(scan_all=args.all, standby_only=args.standby)

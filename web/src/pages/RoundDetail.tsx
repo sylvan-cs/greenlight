@@ -560,7 +560,14 @@ export default function RoundDetail() {
 
       {/* ── Status + summary ── */}
       <section className="space-y-3">
-        <StatusBadge status={round.status} />
+        <div className="flex items-center gap-2 flex-wrap">
+          <StatusBadge status={round.status} />
+          {round.standby_mode && (
+            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-body font-medium bg-primary/15 text-primary border border-primary/40">
+              ⚡ Stand-by
+            </span>
+          )}
+        </div>
         <div>
           <h2 className="font-display text-xl leading-tight">
             {round.has_specific_time && bookedCourse

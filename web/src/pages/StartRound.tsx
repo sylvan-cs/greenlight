@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../contexts/AuthContext'
-import { getDraft, updateDraft, computeTimeRange, DAY_PARTS, DAY_PART_META, MAX_ROUND_DATES, type DayPart } from '../lib/roundStore'
+import { getDraft, updateDraft, computeTimeRange, DAY_PARTS, DAY_PART_META, MAX_ROUND_DATES, MAX_STANDBY_ROUNDS_PER_USER, type DayPart } from '../lib/roundStore'
 import { generateDateChips, formatTime } from '../lib/helpers'
 import InviteFromGroups from '../components/InviteFromGroups'
 import type { Course, ProfileSearchResult } from '../lib/types'
@@ -101,6 +101,10 @@ export default function StartRound() {
   const [myGroups, setMyGroups] = useState<{ id: string; name: string; member_count: number }[]>([])
   const [notifyGroupIds, setNotifyGroupIds] = useState<Set<string>>(new Set(draft.notifyGroupIds))
 
+  // Stand-by mode toggle and current usage count
+  const [standbyMode, setStandbyMode] = useState(draft.standbyMode ?? false)
+  const [activeStandbyCount, setActiveStandbyCount] = useState(0)
+
   useEffect(() => {
     async function fetchCourses() {
       if (!user) return
@@ -132,6 +136,23 @@ export default function StartRound() {
     }
     fetchCourses()
   }, [user]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Count this user's currently-active stand-by rounds (capped at MAX_STANDBY_ROUNDS_PER_USER).
+  useEffect(() => {
+    if (!user) return
+    async function fetchStandbyCount() {
+      const today = new Date().toISOString().slice(0, 10)
+      const { count } = await (supabase as any)
+        .from('rounds')
+        .select('id', { count: 'exact', head: true })
+        .eq('creator_id', user!.id)
+        .eq('standby_mode', true)
+        .in('status', ['open', 'watching', 'found'])
+        .gte('round_date', today)
+      setActiveStandbyCount(count ?? 0)
+    }
+    fetchStandbyCount()
+  }, [user])
 
   // Fetch user's groups for the "Notify a group" UI.
   useEffect(() => {
@@ -222,6 +243,7 @@ export default function StartRound() {
       spots,
       invitedUsers,
       notifyGroupIds: Array.from(notifyGroupIds),
+      standbyMode,
     })
 
     navigate('/start/available')
@@ -494,6 +516,49 @@ export default function StartRound() {
         selectedUsers={invitedUsers}
         onSelectionChange={setInvitedUsers}
       />
+
+      {/* ── Stand-by mode (fast-poll alerts on cancellations) ── */}
+      <section className="space-y-2">
+        <h3 className="text-xs font-body font-semibold uppercase tracking-widest text-muted-foreground">
+          Alert speed
+        </h3>
+        {(() => {
+          const atCap = !standbyMode && activeStandbyCount >= MAX_STANDBY_ROUNDS_PER_USER
+          return (
+            <label
+              className={`flex items-start gap-3 p-3.5 rounded-xl border transition-all duration-150 select-none ${
+                standbyMode
+                  ? 'bg-primary/8 border-primary/40'
+                  : atCap
+                    ? 'bg-card border-border opacity-50 cursor-not-allowed'
+                    : 'bg-card border-border cursor-pointer hover:border-primary/30'
+              }`}
+            >
+              <input
+                type="checkbox"
+                checked={standbyMode}
+                disabled={atCap}
+                onChange={e => setStandbyMode(e.target.checked)}
+                className="mt-0.5 w-4 h-4 rounded border-border accent-primary"
+              />
+              <div className="flex-1 -mt-0.5">
+                <div className="flex items-center gap-1.5 mb-0.5">
+                  <span className="text-sm font-body font-semibold text-foreground">⚡ Stand-by mode</span>
+                </div>
+                <p className="text-xs font-body text-muted-foreground leading-relaxed">
+                  Get an instant alert if a slot opens — checks every 1–2 minutes instead of every 20.
+                  Use sparingly for hard-to-get courses where you want to grab cancellations.
+                </p>
+                {atCap && (
+                  <p className="text-xs font-body text-destructive mt-1.5">
+                    You're already on stand-by for {MAX_STANDBY_ROUNDS_PER_USER} rounds. Cancel one to add another.
+                  </p>
+                )}
+              </div>
+            </label>
+          )
+        })()}
+      </section>
 
       {/* ── Notify a group (soft broadcast — doesn't pre-create RSVPs) ── */}
       {myGroups.length > 0 && (

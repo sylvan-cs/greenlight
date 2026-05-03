@@ -42,6 +42,11 @@ function NextRoundCard({ round, onClick }: { round: RoundWithDetails; onClick: (
           {courseDisplay}
         </p>
         {round.status === 'booked' && <StatusBadge status="booked" />}
+        {round.standby_mode && (
+          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-body font-semibold uppercase tracking-wider bg-primary/15 text-primary border border-primary/40">
+            ⚡ Stand-by
+          </span>
+        )}
       </div>
 
       {/* Date / time */}
