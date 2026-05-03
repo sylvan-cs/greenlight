@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
 import { supabase } from '../lib/supabase'
-import { formatDateShort, formatTime } from '../lib/helpers'
+import { formatDateShort, formatDatesShort, formatTime } from '../lib/helpers'
 import { SmallAvatarRow, AvatarWithLabel } from '../components/Avatar'
 import Avatar from '../components/Avatar'
 import StatusBadge from '../components/StatusBadge'
@@ -13,6 +13,16 @@ function getGreeting(): string {
   if (hour < 12) return 'Morning'
   if (hour < 17) return 'Afternoon'
   return 'Evening'
+}
+
+/** Format a round's date(s) for card subtitles. Uses round_dates when
+ *  populated, falls back to the legacy single round.round_date. */
+function roundDateLabel(round: RoundWithDetails): string {
+  // Once a specific tee time is locked, show only its date.
+  if (round.has_specific_time) return formatDateShort(round.round_date)
+  const dates = (round.round_dates ?? []).map(rd => rd.round_date).sort()
+  if (dates.length > 0) return formatDatesShort(dates)
+  return formatDateShort(round.round_date)
 }
 
 function NextRoundCard({ round, onClick }: { round: RoundWithDetails; onClick: () => void }) {
@@ -36,7 +46,7 @@ function NextRoundCard({ round, onClick }: { round: RoundWithDetails; onClick: (
 
       {/* Date / time */}
       <p className="text-sm font-body text-muted-foreground mb-5">
-        {formatDateShort(round.round_date)} &middot;{' '}
+        {roundDateLabel(round)} &middot;{' '}
         {round.has_specific_time && round.specific_tee_time
           ? formatTime(round.specific_tee_time)
           : `${formatTime(round.time_window_start)} – ${formatTime(round.time_window_end)}`}
@@ -106,7 +116,7 @@ function InProgressCard({ round, onClick }: { round: RoundWithDetails; onClick: 
 
       {/* Date / time */}
       <p className="text-sm font-body text-muted-foreground pr-8 mb-3">
-        {formatDateShort(round.round_date)} &middot; {timeDisplay}
+        {roundDateLabel(round)} &middot; {timeDisplay}
       </p>
 
       {/* Avatar row + count */}
@@ -165,7 +175,7 @@ function InvitedRoundCard({
 
         {/* Date / time */}
         <p className="text-sm font-body text-muted-foreground mb-3">
-          {formatDateShort(round.round_date)} &middot; {timeDisplay}
+          {roundDateLabel(round)} &middot; {timeDisplay}
         </p>
 
         {/* Avatar row + count */}
@@ -244,6 +254,7 @@ export default function Home() {
         .select(`
           *,
           round_courses(*, courses(*)),
+          round_dates(*),
           rsvps(*)
         `)
         .eq('creator_id', user.id)

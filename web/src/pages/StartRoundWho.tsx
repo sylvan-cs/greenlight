@@ -24,10 +24,11 @@ export default function StartRoundWho() {
         .from('tee_times')
         .select('*, courses(*)')
         .in('course_id', draft.courseIds)
-        .eq('tee_date', draft.date)
+        .in('tee_date', draft.dates.length > 0 ? draft.dates : [draft.date])
         .gte('tee_time', draft.timeStart)
         .lte('tee_time', draft.timeEnd)
         .eq('is_available', true)
+        .order('tee_date', { ascending: true })
         .order('tee_time', { ascending: true })
 
       if (!error && data) {
@@ -37,7 +38,7 @@ export default function StartRoundWho() {
     }
 
     fetchTeeTimes()
-  }, [draft.courseIds, draft.date, draft.timeStart, draft.timeEnd])
+  }, [draft.courseIds, draft.dates, draft.date, draft.timeStart, draft.timeEnd])
 
   const selectedTime = teeTimes.find(t => t.id === selectedTimeId)
   const hasAvailability = teeTimes.length > 0
@@ -83,11 +84,17 @@ export default function StartRoundWho() {
     const expectedRsvpCount = 1 + draft.invitedUsers.length
     const effectiveSpots = Math.max(spots, Math.min(4, expectedRsvpCount))
 
+    // Sorted set of selected dates. The earliest is mirrored into
+    // rounds.round_date for backward compat with code that reads a single
+    // date; the full list lives in round_dates (inserted below).
+    const datesArr = (draft.dates && draft.dates.length > 0 ? [...draft.dates] : [draft.date]).sort()
+    const earliestDate = datesArr[0]
+
     const { data: round, error: roundError } = await supabase
       .from('rounds')
       .insert({
         creator_id: user.id,
-        round_date: draft.date,
+        round_date: earliestDate,
         time_window_start: draft.timeStart,
         time_window_end: draft.timeEnd,
         spots_needed: effectiveSpots,
@@ -104,6 +111,18 @@ export default function StartRoundWho() {
       setError(roundError?.message ?? 'Failed to create round')
       setSubmitting(false)
       return
+    }
+
+    // Persist all selected dates into round_dates (junction table).
+    {
+      const dateInserts = datesArr.map(d => ({ round_id: round.id, round_date: d }))
+      const { error: datesErr } = await (supabase as any).from('round_dates').insert(dateInserts)
+      if (datesErr) {
+        // Non-fatal — the round still has rounds.round_date as a single date,
+        // so the matcher can still process it. But log so we know if RLS is
+        // wrong or the table isn't migrated yet.
+        console.error('round_dates insert failed:', datesErr)
+      }
     }
 
     const courseInserts = draft.courseIds.map(courseId => ({

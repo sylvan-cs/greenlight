@@ -86,8 +86,15 @@ export interface GroupWithMembers extends Group {
   group_members: GroupMember[]
 }
 
+export interface RoundDate {
+  id: string
+  round_id: string
+  round_date: string
+}
+
 export interface RoundWithDetails extends Round {
   round_courses: (RoundCourse & { courses: Course })[]
   rsvps: Rsvp[]
+  round_dates?: RoundDate[]
   creator_name?: string
 }

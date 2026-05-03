@@ -14,8 +14,13 @@ export interface InvitedUser {
   email: string
 }
 
+export const MAX_ROUND_DATES = 7
+
 export interface RoundDraft {
+  /** Earliest selected date — kept for backward compat, mirrors `dates[0]`. */
   date: string
+  /** All selected dates (ascending). At least one. */
+  dates: string[]
   dayParts: DayPart[]
   useCustomTime: boolean
   timeStart: string
@@ -44,8 +49,11 @@ function getNextSaturday(): string {
   return sat.toISOString().split('T')[0]
 }
 
+const initialDate = getNextSaturday()
+
 let draft: RoundDraft = {
-  date: getNextSaturday(),
+  date: initialDate,
+  dates: [initialDate],
   dayParts: ['morning'],
   useCustomTime: false,
   timeStart: '06:00',
@@ -59,6 +67,7 @@ let draft: RoundDraft = {
 export function getDraft(): RoundDraft {
   return {
     ...draft,
+    dates: [...draft.dates],
     dayParts: [...draft.dayParts],
     invitedUsers: [...draft.invitedUsers],
     notifyGroupIds: [...draft.notifyGroupIds],
@@ -67,6 +76,17 @@ export function getDraft(): RoundDraft {
 
 export function updateDraft(updates: Partial<RoundDraft>) {
   draft = { ...draft, ...updates }
+  // Keep dates sorted and date in sync with dates[0] for legacy callers.
+  if (updates.dates) {
+    draft.dates = [...new Set(updates.dates)].sort().slice(0, MAX_ROUND_DATES)
+    if (draft.dates.length === 0) draft.dates = [getNextSaturday()]
+    draft.date = draft.dates[0]
+  } else if (updates.date) {
+    // Single-date legacy update — mirror into dates if not explicitly set.
+    if (!draft.dates.includes(updates.date)) {
+      draft.dates = [updates.date]
+    }
+  }
   // Sync start/end times from dayParts (skip for custom — uses explicit timeStart/timeEnd)
   if (!draft.useCustomTime && updates.dayParts) {
     const range = computeTimeRange(draft.dayParts)
@@ -76,8 +96,10 @@ export function updateDraft(updates: Partial<RoundDraft>) {
 }
 
 export function resetDraft() {
+  const d = getNextSaturday()
   draft = {
-    date: getNextSaturday(),
+    date: d,
+    dates: [d],
     dayParts: ['morning'],
     useCustomTime: false,
     timeStart: '06:00',

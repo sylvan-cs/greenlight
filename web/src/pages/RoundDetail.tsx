@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../contexts/AuthContext'
-import { formatDateShort, formatTime, getTimeWindowLabel, generateDateChips } from '../lib/helpers'
+import { formatDateShort, formatDatesShort, formatTime, getTimeWindowLabel, generateDateChips } from '../lib/helpers'
 import { DAY_PARTS, DAY_PART_META, computeTimeRange, type DayPart } from '../lib/roundStore'
 import Avatar from '../components/Avatar'
 import StatusBadge from '../components/StatusBadge'
@@ -129,6 +129,7 @@ export default function RoundDetail() {
         .select(`
           *,
           round_courses(*, courses(*)),
+          round_dates(*),
           rsvps(*)
         `)
         .eq('id', id!)
@@ -567,9 +568,15 @@ export default function RoundDetail() {
               : courseNames.length > 0 ? courseNames.join(' or ') : 'No courses selected'}
           </h2>
           <p className="text-sm font-body text-muted-foreground mt-1">
-            {round.has_specific_time && round.specific_tee_time
-              ? `${formatDateShort(round.round_date)} \u00b7 ${formatTime(round.specific_tee_time)}`
-              : `${formatDateShort(round.round_date)} \u00b7 ${timeLabel}`}
+            {(() => {
+              const dates = (round.round_dates ?? []).map(rd => rd.round_date).sort()
+              const dateLabel = dates.length > 0 ? formatDatesShort(dates) : formatDateShort(round.round_date)
+              if (round.has_specific_time && round.specific_tee_time) {
+                // Once a specific tee time is locked, only its date matters
+                return `${formatDateShort(round.round_date)} \u00b7 ${formatTime(round.specific_tee_time)}`
+              }
+              return `${dateLabel} \u00b7 ${timeLabel}`
+            })()}
           </p>
         </div>
       </section>

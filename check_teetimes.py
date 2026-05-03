@@ -2430,6 +2430,35 @@ def _get_notified_tee_time_ids(sb, round_id, recipient_email):
         return set()
 
 
+def _get_round_dates(sb, round_data, today_str):
+    """Return the list of candidate round dates for a round.
+
+    Reads from the round_dates junction table; falls back to the legacy
+    rounds.round_date column if the table isn't populated for this round
+    (e.g. an older round created before migration 006). Filters out any
+    dates before today since those are no longer matchable.
+    """
+    round_id = round_data.get("id")
+    dates: list = []
+    try:
+        resp = (
+            sb.table("round_dates")
+            .select("round_date")
+            .eq("round_id", round_id)
+            .gte("round_date", today_str)
+            .order("round_date")
+            .execute()
+        )
+        dates = [r["round_date"] for r in (resp.data or []) if r.get("round_date")]
+    except Exception:
+        dates = []
+    if not dates:
+        legacy = round_data.get("round_date")
+        if legacy and legacy >= today_str:
+            dates = [legacy]
+    return dates
+
+
 def _hours_since_last_notification(sb, round_id, recipient_email):
     """Hours since the most recent notification, or None if never notified."""
     if not recipient_email:
@@ -2475,20 +2504,21 @@ def _has_final_reminder_been_sent(sb, round_id, recipient_email):
 
 def _build_email_suggestions(tee_times, round_data, all_courses, match_label="Your time", match_type="exact"):
     """Convert raw tee_times rows into the dict shape _send_match_email expects.
-    Used by the follow-up and final-reminder passes which don't run the full
-    flex/radius logic — just exact-window matches against the round's courses.
+
+    Each tee_time may be on a different date (multi-date rounds), so we
+    derive date_long / date_short from the tee_time's own tee_date, not
+    the round's primary round_date.
     """
     spots_needed = round_data.get("spots_needed", 1)
-    date_long = _format_date_long(round_data["round_date"])
-    date_short = _format_date_friendly(round_data["round_date"])
     out = []
     for tt in tee_times:
         course_info = all_courses.get(tt["course_id"], {})
+        tt_date = tt.get("tee_date") or round_data.get("round_date")
         out.append({
             "course_name": course_info.get("name", "Unknown Course"),
             "time_display": _format_time_ampm(tt["tee_time"]),
-            "date_long": date_long,
-            "date_short": date_short,
+            "date_long": _format_date_long(tt_date),
+            "date_short": _format_date_friendly(tt_date),
             "price_display": tt.get("price_label", ""),
             "spots_display": tt.get("spots_available"),
             "match_label": match_label,
@@ -2514,24 +2544,31 @@ def _diversify_tee_times(tee_times, cap=3):
 
 
 def _query_round_matches(sb, round_data, all_courses):
-    """Exact-window matches for a round against its selected courses.
-    Returns a list of available tee_time rows (no diversification, no caps).
+    """Exact-window matches for a round across all its candidate dates.
+
+    Reads dates from round_dates if present; falls back to the legacy
+    rounds.round_date for older rounds.
     """
     course_ids = [rc["course_id"] for rc in (round_data.get("round_courses") or []) if rc.get("course_id")]
     if not course_ids:
         return []
     spots_needed = round_data.get("spots_needed", 1)
+    today_str = datetime.now().strftime("%Y-%m-%d")
+    dates = _get_round_dates(sb, round_data, today_str)
+    if not dates:
+        return []
     try:
         tt_resp = (
             sb.table("tee_times")
             .select("*")
             .in_("course_id", course_ids)
-            .eq("tee_date", round_data["round_date"])
+            .in_("tee_date", dates)
             .gte("tee_time", round_data["time_window_start"])
             .lte("tee_time", round_data["time_window_end"])
             .eq("is_available", True)
+            .order("tee_date")
             .order("tee_time")
-            .limit(20)
+            .limit(40)
             .execute()
         )
     except Exception as e:
@@ -2761,7 +2798,12 @@ def _check_round_matches():
                 spots_needed = round_data.get("spots_needed", 1)
                 time_start = round_data["time_window_start"]
                 time_end = round_data["time_window_end"]
-                round_date = round_data["round_date"]
+                # All candidate dates for this round (multi-date support).
+                # Falls back to round_data["round_date"] for legacy rounds.
+                round_dates = _get_round_dates(sb, round_data, today)
+                if not round_dates:
+                    continue
+                round_date = round_dates[0]  # primary, used for legacy display paths
 
                 # Get round's courses
                 rc_resp = (
@@ -2793,12 +2835,13 @@ def _check_round_matches():
                     sb.table("tee_times")
                     .select("*")
                     .in_("course_id", course_ids)
-                    .eq("tee_date", round_date)
+                    .in_("tee_date", round_dates)
                     .gte("tee_time", time_start)
                     .lte("tee_time", time_end)
                     .eq("is_available", True)
+                    .order("tee_date")
                     .order("tee_time")
-                    .limit(20)
+                    .limit(40)
                     .execute()
                 )
                 for tt in (tt_resp.data or []):
@@ -2829,12 +2872,13 @@ def _check_round_matches():
                         sb.table("tee_times")
                         .select("*")
                         .in_("course_id", course_ids)
-                        .eq("tee_date", round_date)
+                        .in_("tee_date", round_dates)
                         .gte("tee_time", flex_start)
                         .lte("tee_time", flex_end)
                         .eq("is_available", True)
+                        .order("tee_date")
                         .order("tee_time")
-                        .limit(20)
+                        .limit(40)
                         .execute()
                     )
                     for tt in (flex_resp.data or []):
@@ -2892,12 +2936,13 @@ def _check_round_matches():
                                 sb.table("tee_times")
                                 .select("*")
                                 .in_("course_id", nearby_ids)
-                                .eq("tee_date", round_date)
+                                .in_("tee_date", round_dates)
                                 .gte("tee_time", time_start)
                                 .lte("tee_time", time_end)
                                 .eq("is_available", True)
+                                .order("tee_date")
                                 .order("tee_time")
-                                .limit(20)
+                                .limit(40)
                                 .execute()
                             )
                             for tt in (nearby_resp.data or []):
@@ -2950,19 +2995,22 @@ def _check_round_matches():
                     "matched_at": now_iso,
                 }).eq("id", round_id).execute()
 
-                # Build suggestion dicts for email
-                date_display = _format_date_friendly(round_date)
-                date_long = _format_date_long(round_date)
-                date_short = round_date  # YYYY-MM-DD for booking instruction
+                # Build suggestion dicts for email. Each tee_time may be on a
+                # different date in multi-date rounds — use the tee_time's own
+                # tee_date for date_long/date_short rather than the round's
+                # primary round_date.
+                best_tt_date = match.get("tee_date") or round_date
+                date_display = _format_date_friendly(best_tt_date)
 
                 email_suggestions = []
                 for s in suggestions:
                     tt = s["tee_time"]
+                    tt_date = tt.get("tee_date") or round_date
                     email_suggestions.append({
                         "course_name": s["course_name"],
                         "time_display": _format_time_ampm(tt["tee_time"]),
-                        "date_long": date_long,
-                        "date_short": date_display,
+                        "date_long": _format_date_long(tt_date),
+                        "date_short": _format_date_friendly(tt_date),
                         "price_display": tt.get("price_label", ""),
                         "spots_display": tt.get("spots_available"),
                         "match_label": s["match_label"],

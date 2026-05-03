@@ -24,6 +24,17 @@ export function formatDateShort(dateStr: string): string {
   })
 }
 
+/** Compact label for one or more dates: "Sat, May 4", "Sat May 4 or Sun May 5",
+ *  "Sat May 4 + 2 more". `dates` should be sorted ascending. */
+export function formatDatesShort(dates: string[]): string {
+  if (dates.length === 0) return ''
+  if (dates.length === 1) return formatDateShort(dates[0])
+  if (dates.length === 2) {
+    return `${formatDateShort(dates[0])} or ${formatDateShort(dates[1])}`
+  }
+  return `${formatDateShort(dates[0])} + ${dates.length - 1} more`
+}
+
 export function generateShareCode(): string {
   const chars = 'abcdefghijklmnopqrstuvwxyz0123456789'
   let code = ''

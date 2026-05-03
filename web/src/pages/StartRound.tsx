@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../contexts/AuthContext'
-import { getDraft, updateDraft, computeTimeRange, DAY_PARTS, DAY_PART_META, type DayPart } from '../lib/roundStore'
+import { getDraft, updateDraft, computeTimeRange, DAY_PARTS, DAY_PART_META, MAX_ROUND_DATES, type DayPart } from '../lib/roundStore'
 import { generateDateChips, formatTime } from '../lib/helpers'
 import InviteFromGroups from '../components/InviteFromGroups'
 import type { Course, ProfileSearchResult } from '../lib/types'
@@ -81,7 +81,8 @@ export default function StartRound() {
   const { user } = useAuth()
   const draft = getDraft()
 
-  const [selectedDate, setSelectedDate] = useState(draft.date)
+  // Multi-date selection: Set of YYYY-MM-DD strings.
+  const [selectedDates, setSelectedDates] = useState<Set<string>>(new Set(draft.dates))
   const [selectedDayParts, setSelectedDayParts] = useState<Set<DayPart>>(new Set(draft.dayParts))
   const [useCustomTime, setUseCustomTime] = useState(draft.useCustomTime)
   const [customStart, setCustomStart] = useState(draft.useCustomTime ? draft.timeStart : '08:00')
@@ -208,8 +209,11 @@ export default function StartRound() {
       ? { start: customStart, end: customEnd }
       : computeTimeRange(parts)
 
+    const datesArr = Array.from(selectedDates).sort()
+
     updateDraft({
-      date: selectedDate,
+      date: datesArr[0],
+      dates: datesArr,
       dayParts: parts,
       useCustomTime,
       timeStart: timeRange.start,
@@ -223,9 +227,21 @@ export default function StartRound() {
     navigate('/start/available')
   }
 
-  const canProceed = selectedCourseIds.size > 0 && (useCustomTime || selectedDayParts.size > 0) && !timeError
+  const canProceed = selectedDates.size > 0 && selectedCourseIds.size > 0 && (useCustomTime || selectedDayParts.size > 0) && !timeError
 
-  const confirmDate = new Date(selectedDate + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+  const sortedSelectedDates = Array.from(selectedDates).sort()
+  const primaryDate = sortedSelectedDates[0] ?? ''
+  const confirmDate = primaryDate
+    ? (() => {
+        const first = new Date(primaryDate + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+        if (sortedSelectedDates.length === 1) return first
+        if (sortedSelectedDates.length === 2) {
+          const second = new Date(sortedSelectedDates[1] + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+          return `${first} or ${second}`
+        }
+        return `${first} + ${sortedSelectedDates.length - 1} more`
+      })()
+    : 'Pick a date'
   const confirmTime = useCustomTime
     ? `${formatTime(customStart)} – ${formatTime(customEnd)}`
     : selectedDayParts.size === 3
@@ -259,23 +275,43 @@ export default function StartRound() {
         <h1 className="text-3xl font-display tracking-tight">Start a Round</h1>
       </div>
 
-      {/* ── Date ── */}
+      {/* ── Date (multi-select) ── */}
       <section className="space-y-2.5">
-        <h3 className="text-xs font-body font-semibold uppercase tracking-widest text-muted-foreground">
-          Date
-        </h3>
+        <div className="flex items-baseline justify-between">
+          <h3 className="text-xs font-body font-semibold uppercase tracking-widest text-muted-foreground">
+            Date{selectedDates.size > 1 ? 's' : ''}
+          </h3>
+          <span className="text-xs font-body text-muted-foreground">
+            {selectedDates.size === 0 ? 'Tap to pick' : selectedDates.size === 1 ? 'Tap more for flexibility' : `${selectedDates.size} selected`}
+          </span>
+        </div>
         <div className="relative -mx-5">
           <div className="flex gap-2 overflow-x-auto px-5 pb-1 no-scrollbar">
             {dateChips.map(chip => {
-              const isSelected = selectedDate === chip.date
+              const isSelected = selectedDates.has(chip.date)
+              const atMax = !isSelected && selectedDates.size >= MAX_ROUND_DATES
               return (
                 <button
                   key={chip.date}
-                  onClick={() => setSelectedDate(chip.date)}
+                  disabled={atMax}
+                  onClick={() => {
+                    setSelectedDates(prev => {
+                      const next = new Set(prev)
+                      if (next.has(chip.date)) {
+                        // Don't allow deselecting the last date — must pick at least one
+                        if (next.size > 1) next.delete(chip.date)
+                      } else if (next.size < MAX_ROUND_DATES) {
+                        next.add(chip.date)
+                      }
+                      return next
+                    })
+                  }}
                   className={`shrink-0 flex flex-col items-center w-14 py-2 rounded-xl text-center transition-all duration-150 active:scale-95 select-none ${
                     isSelected
                       ? 'bg-primary text-primary-foreground'
-                      : 'bg-muted/50 text-muted-foreground hover:bg-muted'
+                      : atMax
+                        ? 'bg-muted/30 text-muted-foreground/40 cursor-not-allowed'
+                        : 'bg-muted/50 text-muted-foreground hover:bg-muted'
                   }`}
                 >
                   <span className="text-[10px] font-body font-semibold uppercase tracking-wider">
