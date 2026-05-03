@@ -2246,7 +2246,8 @@ def _send_sms(api_key, from_phone, to_phone, message):
 
 def _send_match_email(to_email, suggestions, round_id,
                       extra_line="",
-                      from_email="The Starter <teetimes@thestarter.golf>"):
+                      from_email="The Starter <teetimes@thestarter.golf>",
+                      searched_courses=None):
     """Send match notification email with up to 3 ranked suggestions via Resend."""
     api_key = os.environ.get("RESEND_API_KEY", "")
     to_email = os.environ.get("NOTIFY_EMAIL") or to_email
@@ -2275,6 +2276,11 @@ def _send_match_email(to_email, suggestions, round_id,
         lines.append(f"Match: {s['match_label']}")
         lines.append(f"\nBook This Time: {s['booking_url']}")
         lines.append(f"\u2192 Select {s['date_short']} \u00b7 {s['players']} players \u00b7 {s['time_display']}\n")
+
+    if searched_courses:
+        lines.append("---")
+        lines.append(f"We checked all {len(searched_courses)} course{'s' if len(searched_courses) != 1 else ''} in your round:")
+        lines.append(", ".join(searched_courses))
 
     lines.append("---")
     lines.append("Reply STOP to unsubscribe from tee time alerts")
@@ -2309,7 +2315,8 @@ def _send_match_email(to_email, suggestions, round_id,
 def _send_rsvp_email(to_email, creator_name, suggestions,
                      share_code,
                      extra_line="",
-                     from_email="The Starter <teetimes@thestarter.golf>"):
+                     from_email="The Starter <teetimes@thestarter.golf>",
+                     searched_courses=None):
     """Send RSVP notification email via Resend."""
     api_key = os.environ.get("RESEND_API_KEY", "")
     to_email = os.environ.get("NOTIFY_EMAIL") or to_email
@@ -2339,6 +2346,12 @@ def _send_rsvp_email(to_email, creator_name, suggestions,
         lines.append(f"\u2192 Select {s['date_short']} \u00b7 {s['players']} players \u00b7 {s['time_display']}\n")
 
     lines.append(f"View round: {share_link}")
+
+    if searched_courses:
+        lines.append("\n---")
+        lines.append(f"We checked all {len(searched_courses)} course{'s' if len(searched_courses) != 1 else ''} in this round:")
+        lines.append(", ".join(searched_courses))
+
     lines.append("\n---")
     lines.append("Reply STOP to unsubscribe from tee time alerts")
     text = "\n".join(lines)
@@ -2574,8 +2587,26 @@ def _check_round_matches():
                 if not suggestions:
                     continue
 
-                # Cap at 3 suggestions (already ranked: exact first, flex second, radius third)
-                suggestions = suggestions[:3]
+                # Diversify: prefer one suggestion per course before duplicates from
+                # the same course. Otherwise the earliest 3 tee_times often all come
+                # from one course (e.g. Rock Spring at 6:00/6:08/6:16) and the user
+                # never sees that other selected courses also had matches.
+                #
+                # Sort key preserves the existing exact > flex > radius priority
+                # within a course, by relying on the order suggestions were appended.
+                seen_courses: set = set()
+                primary: list = []
+                fallback: list = []
+                for s in suggestions:
+                    cid = s["tee_time"].get("course_id")
+                    if cid not in seen_courses:
+                        seen_courses.add(cid)
+                        primary.append(s)
+                    else:
+                        fallback.append(s)
+                # Take up to 3, filling with same-course duplicates only if we don't
+                # have 3 unique courses yet.
+                suggestions = (primary + fallback)[:3]
 
                 # Use the best match (first suggestion) for the round update
                 best = suggestions[0]
@@ -2612,6 +2643,14 @@ def _check_round_matches():
                         "players": str(spots_needed),
                     })
 
+                # List every course the user asked the system to watch, so the
+                # email can reassure them nothing was skipped.
+                searched_course_names = sorted({
+                    all_courses[cid]["name"]
+                    for cid in course_ids
+                    if cid in all_courses and all_courses[cid].get("name")
+                })
+
                 # Fetch all RSVPs with status='in' (includes co-watchers)
                 rsvp_resp = (
                     sb.table("rsvps")
@@ -2644,6 +2683,7 @@ def _check_round_matches():
                         creator_email, email_suggestions, round_id,
                         extra_line=watcher_line,
                         from_email=from_email,
+                        searched_courses=searched_course_names,
                     )
 
                 # SMS to creator
@@ -2690,6 +2730,7 @@ def _check_round_matches():
                             round_data["share_code"],
                             extra_line=f"{creator_first} is watching too \u2014 first to book gets it.",
                             from_email=from_email,
+                            searched_courses=searched_course_names,
                         )
 
                     # SMS to co-watcher
@@ -2735,6 +2776,7 @@ def _check_round_matches():
                             rsvp_email, creator_first, email_suggestions,
                             round_data["share_code"],
                             from_email=from_email,
+                            searched_courses=searched_course_names,
                         )
 
             except Exception as e:
