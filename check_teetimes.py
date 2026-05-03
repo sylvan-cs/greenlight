@@ -2351,14 +2351,19 @@ def _send_match_email(to_email, suggestions, round_id,
         return False
 
     best = suggestions[0]
+    # Include the day-of-week + date in the subject so multiple alerts for
+    # different days at the same course/time don't look like duplicates.
+    # date_short is like "Sat, May 4".
+    best_date = best.get("date_short") or ""
+    date_part = f" {best_date}" if best_date else ""
     if is_standby and notification_type == "match":
-        subject = f"\u26a1 Stand-by alert: {best['time_display']} at {best['course_name']} just opened"
+        subject = f"\u26a1 Stand-by alert:{date_part} {best['time_display']} at {best['course_name']}"
     elif notification_type == "followup":
-        subject = f"\u26f3 New tee times for your round \u2014 {best['time_display']} at {best['course_name']}"
+        subject = f"\u26f3 New tee times \u2014{date_part} {best['time_display']} at {best['course_name']}"
     elif notification_type == "final":
         subject = f"\u23f0 Last call: {best['time_display']} at {best['course_name']} tomorrow"
     else:
-        subject = f"\u26f3 Tee time found! {best['time_display']} at {best['course_name']}"
+        subject = f"\u26f3 Tee time found!{date_part} {best['time_display']} at {best['course_name']}"
 
     lines = ["\u26f3 Tee time found for your round!\n"]
     if extra_line:
