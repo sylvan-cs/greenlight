@@ -2293,6 +2293,7 @@ def _send_sms(api_key, from_phone, to_phone, message):
     """Send an SMS via Telnyx. Returns True on success."""
     try:
         import urllib.request
+        import urllib.error
         payload = json.dumps({
             "from": from_phone,
             "to": to_phone,
@@ -2306,11 +2307,22 @@ def _send_sms(api_key, from_phone, to_phone, message):
                 "Content-Type": "application/json",
             },
         )
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            result = json.loads(resp.read())
-            msg_id = (result.get("data") or {}).get("id", "ok")
-            print(f"    Telnyx: sent {msg_id}")
-            return True
+        try:
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                result = json.loads(resp.read())
+                msg_id = (result.get("data") or {}).get("id", "ok")
+                print(f"    Telnyx: sent {msg_id}")
+                return True
+        except urllib.error.HTTPError as http_err:
+            # Surface Telnyx's error body — without it a 400 looks like a
+            # generic "Bad Request" and you can't tell if it's a bad number,
+            # an unregistered campaign, a profile issue, etc.
+            try:
+                err_body = http_err.read().decode("utf-8", errors="replace")[:500]
+            except Exception:
+                err_body = "<no body>"
+            print(f"    Telnyx error: HTTP {http_err.code} from={from_phone} to={to_phone}: {err_body}")
+            return False
     except Exception as e:
         print(f"    Telnyx error: {e}")
         return False
