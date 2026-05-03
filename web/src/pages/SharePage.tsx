@@ -164,6 +164,21 @@ export default function SharePage() {
       localStorage.setItem(`rsvp_${shareCode}`, JSON.stringify({ id: rsvpData.id, name: name.trim(), status }))
     }
 
+    // If a new RSVP just pushed the "in" count past spots_needed (e.g. someone
+    // joins a Solo round), bump spots_needed so the matcher looks for a tee
+    // time big enough for the group.
+    if (status === 'in' && round) {
+      const newInCount = round.rsvps.filter(r => r.status === 'in').length + 1
+      if (newInCount > round.spots_needed) {
+        const newSpots = Math.min(4, newInCount)
+        await supabase
+          .from('rounds')
+          .update({ spots_needed: newSpots })
+          .eq('id', round.id)
+        setRound(prev => prev ? { ...prev, spots_needed: newSpots } : prev)
+      }
+    }
+
     setRsvpDone(true)
     setSubmitting(false)
   }

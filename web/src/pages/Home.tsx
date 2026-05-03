@@ -247,7 +247,7 @@ export default function Home() {
           rsvps(*)
         `)
         .eq('creator_id', user.id)
-        .or(`round_date.gte.${today},status.eq.watching`)
+        .gte('round_date', today)
         .order('round_date', { ascending: true })
 
       if (error) {
@@ -275,7 +275,7 @@ export default function Home() {
           .in('id', roundIds)
           .neq('creator_id', user.id)
           .neq('status', 'cancelled')
-          .or(`round_date.gte.${today},status.eq.watching`)
+          .gte('round_date', today)
           .order('round_date', { ascending: true })
 
         if (invData) {

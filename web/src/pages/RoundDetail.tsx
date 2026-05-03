@@ -698,7 +698,7 @@ export default function RoundDetail() {
           <div className="space-y-2">
             <span className="text-xs font-body font-semibold uppercase tracking-widest text-muted-foreground">Players</span>
             <div className="flex gap-2">
-              {[2, 3, 4].map(n => (
+              {[1, 2, 3, 4].map(n => (
                 <button
                   key={n}
                   onClick={() => setEditSpots(n)}
@@ -708,7 +708,7 @@ export default function RoundDetail() {
                       : 'bg-transparent text-muted-foreground border-border hover:border-foreground/20'
                   }`}
                 >
-                  {n}
+                  {n === 1 ? 'Solo' : n}
                 </button>
               ))}
             </div>
@@ -1155,6 +1155,21 @@ export default function RoundDetail() {
                     if (prev.rsvps.some(r => r.id === inserted.id)) return prev
                     return { ...prev, rsvps: [...prev.rsvps, inserted] }
                   })
+                }
+
+                // Auto-bump spots_needed if a solo round is gaining a guest.
+                // Without this, a 1-spot round stays a 1-spot round and the
+                // matcher keeps looking for tee times only big enough for the
+                // creator, leaving the new invitee with nowhere to slot in.
+                const currentSpots = round.spots_needed ?? 1
+                const expectedRsvpCount = rsvps.filter(r => r.status !== 'out').length + 1
+                if (expectedRsvpCount > currentSpots) {
+                  const newSpots = Math.min(4, expectedRsvpCount)
+                  await supabase
+                    .from('rounds')
+                    .update({ spots_needed: newSpots })
+                    .eq('id', round.id)
+                  setRound(prev => prev ? { ...prev, spots_needed: newSpots } : prev)
                 }
 
                 setInviteFlash(`Invited ${u.full_name.split(' ')[0]}`)

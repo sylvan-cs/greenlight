@@ -335,7 +335,7 @@ export default function StartRound() {
           Players
         </h3>
         <div className="flex gap-2">
-          {[2, 3, 4].map(n => (
+          {[1, 2, 3, 4].map(n => (
             <button
               key={n}
               onClick={() => setSpots(n)}
@@ -345,7 +345,7 @@ export default function StartRound() {
                   : 'bg-transparent text-muted-foreground border-border hover:border-foreground/20'
               }`}
             >
-              {n}
+              {n === 1 ? 'Solo' : n}
             </button>
           ))}
         </div>

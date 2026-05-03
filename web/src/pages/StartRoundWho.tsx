@@ -78,6 +78,11 @@ export default function StartRoundWho() {
     const creatorName = user.user_metadata?.full_name ?? 'Unknown'
     const hasSpecific = !forceWatch && hasAvailability && !!selectedTime
 
+    // Auto-bump spots_needed if the creator picked Solo but is also pre-inviting
+    // people. The matcher needs to look for tee times that fit everyone.
+    const expectedRsvpCount = 1 + draft.invitedUsers.length
+    const effectiveSpots = Math.max(spots, Math.min(4, expectedRsvpCount))
+
     const { data: round, error: roundError } = await supabase
       .from('rounds')
       .insert({
@@ -85,7 +90,7 @@ export default function StartRoundWho() {
         round_date: draft.date,
         time_window_start: draft.timeStart,
         time_window_end: draft.timeEnd,
-        spots_needed: spots,
+        spots_needed: effectiveSpots,
         has_specific_time: hasSpecific,
         specific_tee_time: hasSpecific ? selectedTime.tee_time : null,
         specific_course_id: hasSpecific ? selectedTime.course_id : null,
