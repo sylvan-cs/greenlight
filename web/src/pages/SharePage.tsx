@@ -221,6 +221,24 @@ export default function SharePage() {
   const isFull = rsvpsIn.length >= round.spots_needed
   const isCancelled = round.status === 'cancelled'
   const timeLabel = getTimeWindowLabel(round.time_window_start, round.time_window_end)
+  // Resolve a bookable course URL: the specific course if set (confirmed
+  // rounds), else the first watched course (standby/open rounds have no
+  // specific_course_id). Powers the "Book this time" button so SMS/email
+  // recipients who land here can actually book instead of hitting a dead end.
+  const bookingUrl =
+    round.round_courses?.find(rc => rc.course_id === round.specific_course_id)?.courses?.booking_url
+    || round.round_courses?.[0]?.courses?.booking_url
+    || ''
+  const bookingButton = bookingUrl ? (
+    <a
+      href={bookingUrl}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="flex items-center justify-center w-full h-12 bg-primary hover:bg-green-hover text-primary-foreground font-bold rounded-xl transition-colors text-base font-body"
+    >
+      Book this time
+    </a>
+  ) : null
 
   return (
     <div className="min-h-screen bg-background px-5 max-w-lg mx-auto pt-8 pb-10 animate-fade-in">
@@ -267,6 +285,7 @@ export default function SharePage() {
               {creatorName} is booking this time
             </p>
           )}
+          {round.status !== 'booked' && bookingButton}
         </div>
       ) : courseNames.length > 0 && (
         <div className="bg-card border border-border rounded-2xl p-5 space-y-2 mb-4">
@@ -278,6 +297,7 @@ export default function SharePage() {
               <p key={i} className="font-display text-[15px] font-medium text-foreground">{name}</p>
             ))}
           </div>
+          {bookingButton}
         </div>
       )}
 

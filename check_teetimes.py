@@ -662,21 +662,62 @@ def _parse_golfnow_api_teetimes(api_bodies, facility_id):
 
             tt = {"time": str(time_str).strip()}
 
-            # Players available: top-level playerRule is the max players
+            # Newer GolfNow responses dropped top-level playerRule/displayRate
+            # and now carry player count + price ONLY inside teeTimeRates[].
+            # Pull the nested rates once and fall back to them. This is purely
+            # additive: if the shape differs again, the fields stay unset (same
+            # as the old behavior) rather than raising.
+            rates = item.get("teeTimeRates")
+            rates = rates if isinstance(rates, list) else []
+
+            # Players available: prefer top-level playerRule (max players);
+            # else the max playerRule across the nested rate options.
             pr = item.get("playerRule")
+            if pr is None and rates:
+                rate_prs = [
+                    r.get("playerRule") for r in rates
+                    if isinstance(r, dict) and r.get("playerRule") is not None
+                ]
+                if rate_prs:
+                    try:
+                        pr = max(int(x) for x in rate_prs)
+                    except (ValueError, TypeError):
+                        pr = None
             if pr is not None:
                 try:
                     tt["players_available"] = int(pr)
                 except (ValueError, TypeError):
                     pass
 
-            # Price: use displayRate (dollars) or minRateFormatted (string)
+            # Price: top-level displayRate, else cheapest greensFees across the
+            # nested rate options, else the preformatted minRateFormatted string.
             display_rate = item.get("displayRate")
             if display_rate is not None:
                 try:
                     tt["price"] = f"${display_rate:.0f}" if float(display_rate) == int(float(display_rate)) else f"${display_rate:.2f}"
                 except (ValueError, TypeError):
                     pass
+            if "price" not in tt and rates:
+                rate_prices = []
+                for r in rates:
+                    if not isinstance(r, dict):
+                        continue
+                    gf = r.get("greensFees")
+                    val = None
+                    if isinstance(gf, dict):
+                        val = gf.get("value", gf.get("amount"))
+                    elif isinstance(gf, (int, float)):
+                        val = gf
+                    elif isinstance(gf, list) and gf and isinstance(gf[0], dict):
+                        val = gf[0].get("value", gf[0].get("amount"))
+                    if val is not None:
+                        try:
+                            rate_prices.append(float(val))
+                        except (ValueError, TypeError):
+                            pass
+                if rate_prices:
+                    lo = min(rate_prices)
+                    tt["price"] = f"${lo:.0f}" if lo == int(lo) else f"${lo:.2f}"
             if "price" not in tt:
                 formatted = item.get("minRateFormatted")
                 if formatted:
@@ -2092,8 +2133,13 @@ def _sync_to_supabase(all_results, active_courses):
                         price_raw = tt.get("green_fee") or tt.get("price")
                     price_cents, price_label = _parse_price_cents(price_raw)
 
-                    # Spots
-                    spots = tt.get("players_available") or tt.get("players")
+                    # Spots. Explicit None check, NOT `or`: a legitimate
+                    # 0-spots slot must persist as 0 (and fail matching), not
+                    # collapse to None — the matcher treats None as "fits
+                    # everyone", which would re-introduce false positives.
+                    spots = tt.get("players_available")
+                    if spots is None:
+                        spots = tt.get("players")
 
                     row = {
                         "course_id": course_uuid,
@@ -2381,7 +2427,19 @@ def _send_match_email(to_email, suggestions, round_id,
     else:
         subject = f"\u26f3 Tee time found!{date_part} {best['time_display']} at {best['course_name']}"
 
-    lines = ["\u26f3 Tee time found for your round!\n"]
+    # Body header must agree with the subject branch above. The standby
+    # subject said "Stand-by alert" while the body used to hardcode "Tee time
+    # found" \u2014 contradictory. Use neutral "is available" (we can't tell a fresh
+    # cancellation from a normally-open slot).
+    if is_standby and notification_type == "match":
+        header = "\u26a1 Stand-by alert: a tee time is available in your window"
+    elif notification_type == "followup":
+        header = "\u26f3 New tee times for your round"
+    elif notification_type == "final":
+        header = "\u23f0 Last call for your round"
+    else:
+        header = "\u26f3 Tee time found for your round!"
+    lines = [header + "\n"]
     if extra_line:
         lines.append(extra_line + "\n")
     for i, s in enumerate(suggestions):
@@ -2398,7 +2456,13 @@ def _send_match_email(to_email, suggestions, round_id,
             lines.append(" \u00b7 ".join(detail_parts))
         lines.append(f"Match: {s['match_label']}")
         lines.append(f"\nBook This Time: {s['booking_url']}")
-        lines.append(f"\u2192 Select {s['date_short']} \u00b7 {s['players']} players \u00b7 {s['time_display']}\n")
+        # Only assert a specific player count when availability is confirmed
+        # (spots_display is set). For NULL-availability sources (e.g. GolfNow)
+        # we can't verify capacity, so don't promise "N players".
+        if s.get('spots_display'):
+            lines.append(f"\u2192 Select {s['date_short']} \u00b7 {s['players']} players \u00b7 {s['time_display']}\n")
+        else:
+            lines.append(f"\u2192 Open {s['date_short']} at {s['time_display']} and confirm space for your group of {s['players']}\n")
 
     if searched_courses:
         lines.append("---")
@@ -2466,7 +2530,10 @@ def _send_rsvp_email(to_email, creator_name, suggestions,
             lines.append(" \u00b7 ".join(detail_parts))
         lines.append(f"Match: {s['match_label']}")
         lines.append(f"\nBook This Time: {s['booking_url']}")
-        lines.append(f"\u2192 Select {s['date_short']} \u00b7 {s['players']} players \u00b7 {s['time_display']}\n")
+        if s.get('spots_display'):
+            lines.append(f"\u2192 Select {s['date_short']} \u00b7 {s['players']} players \u00b7 {s['time_display']}\n")
+        else:
+            lines.append(f"\u2192 Open {s['date_short']} at {s['time_display']} and confirm space for your group of {s['players']}\n")
 
     lines.append(f"View round: {share_link}")
 
@@ -2846,6 +2913,7 @@ def _send_followup_notifications(sb, all_courses, from_email):
                 all_courses[cid]["name"]
                 for cid in course_ids
                 if cid in all_courses and all_courses[cid].get("name")
+                and all_courses[cid].get("scan_enabled")
             })
 
             extra = (
@@ -2929,6 +2997,7 @@ def _send_final_reminders(sb, all_courses, from_email, telnyx_api_key="", telnyx
                 all_courses[cid]["name"]
                 for cid in course_ids
                 if cid in all_courses and all_courses[cid].get("name")
+                and all_courses[cid].get("scan_enabled")
             })
 
             extra = "Last call — your round is in less than 24 hours. Here are the best current options:"
@@ -3015,7 +3084,7 @@ def _check_round_matches():
             return
 
         # Fetch all courses with coordinates for radius matching
-        all_courses_resp = sb.table("courses").select("id, name, lat, lng, booking_url").execute()
+        all_courses_resp = sb.table("courses").select("id, name, lat, lng, booking_url, scan_enabled, booking_system").execute()
         all_courses = {c["id"]: c for c in (all_courses_resp.data or [])}
 
         sms_sent = 0
@@ -3291,6 +3360,7 @@ def _check_round_matches():
                     all_courses[cid]["name"]
                     for cid in course_ids
                     if cid in all_courses and all_courses[cid].get("name")
+                    and all_courses[cid].get("scan_enabled")
                 })
 
                 # Fetch all RSVPs with status='in' (includes co-watchers)
