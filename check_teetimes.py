@@ -735,6 +735,18 @@ def _parse_golfnow_api_teetimes(api_bodies, facility_id):
                 except (ValueError, TypeError):
                     pass
 
+            # One-time raw-item dump so GolfNow's current API shape shows up in
+            # Railway logs. Top-level playerRule/displayRate are gone and the
+            # nested teeTimeRates[] keys for capacity/price are still unconfirmed
+            # — this reveals them so the parser can be corrected. Remove later.
+            if not getattr(_parse_golfnow_api_teetimes, "_raw_dumped", False):
+                _parse_golfnow_api_teetimes._raw_dumped = True
+                try:
+                    print(f"  [golfnow-debug] item keys: {list(item.keys())}")
+                    print(f"  [golfnow-debug] item sample: {json.dumps(item, default=str)[:1800]}")
+                except Exception:
+                    pass
+
             tt["source"] = "api"
             tee_times.append(tt)
 
@@ -2730,6 +2742,34 @@ def _query_round_matches(sb, round_data, all_courses):
     return _query_round_matches_ex(sb, round_data, all_courses, include_nearby=False)
 
 
+# Booking systems where a NULL spots_available genuinely means "fits any
+# party", not "we failed to parse capacity". TeeSnap is queried with a
+# hardcoded players=4, so its NULL slots already fit a foursome. GolfNow is
+# deliberately NOT here: its capacity currently can't be parsed, so a NULL
+# GolfNow slot must not silently satisfy a multi-player request — that caused
+# false "tee time found" alerts for slots that didn't actually seat the group.
+_NULL_TRUSTED_SYSTEMS = {"teesnap"}
+
+
+def _spots_ok(tt, spots_needed, all_courses):
+    """Whether a tee_time can seat the requested party size.
+
+    Known capacity -> compare directly. Unknown capacity (spots_available is
+    NULL) -> only a match when the party is 1 (any slot seats one) or the
+    course's booking system is one where NULL reliably means "fits any party".
+    """
+    sa = tt.get("spots_available")
+    if sa is not None:
+        try:
+            return int(sa) >= int(spots_needed)
+        except (ValueError, TypeError):
+            return True
+    if (spots_needed or 1) <= 1:
+        return True
+    system = (all_courses.get(tt.get("course_id")) or {}).get("booking_system")
+    return system in _NULL_TRUSTED_SYSTEMS
+
+
 def _query_round_matches_ex(sb, round_data, all_courses, include_nearby=False):
     """Same as _query_round_matches but with optional nearby-course expansion.
 
@@ -2754,7 +2794,7 @@ def _query_round_matches_ex(sb, round_data, all_courses, include_nearby=False):
     time_end = round_data["time_window_end"]
 
     def _ok(tt):
-        return tt.get("spots_available") is None or tt["spots_available"] >= spots_needed
+        return _spots_ok(tt, spots_needed, all_courses)
 
     # Preferred (selected) courses
     preferred: list = []
@@ -3032,11 +3072,13 @@ def _send_final_reminders(sb, all_courses, from_email, telnyx_api_key="", telnyx
                         cprof = None
                     if cprof and cprof.get("phone") and cprof.get("sms_opt_in"):
                         best_s = email_suggestions[0]
-                        short_url = _build_short_url(r)
+                        # Link straight to the course's booking page (what the
+                        # recipient wants to tap), not the in-app share page.
+                        book_url = best_s.get("booking_url") or _build_short_url(r)
                         spots_str = f" ({best_s['spots_display']} spots)" if best_s.get("spots_display") else ""
                         sms_msg = (
                             f"Last call: {best_s['time_display']} {best_s['date_short']} "
-                            f"at {best_s['course_name']}{spots_str}\n{short_url}"
+                            f"at {best_s['course_name']}{spots_str}\n{book_url}"
                         )
                         _send_sms(telnyx_api_key, telnyx_phone, cprof["phone"], sms_msg)
         except Exception as e:
@@ -3148,7 +3190,7 @@ def _check_round_matches():
                     .execute()
                 )
                 for tt in (tt_resp.data or []):
-                    if tt.get("spots_available") is None or tt["spots_available"] >= spots_needed:
+                    if _spots_ok(tt, spots_needed, all_courses):
                         course_info = all_courses.get(tt["course_id"], {})
                         suggestions.append({
                             "tee_time": tt,
@@ -3190,7 +3232,7 @@ def _check_round_matches():
                         # Skip if already in exact window
                         if time_start <= tt["tee_time"] <= time_end:
                             continue
-                        if tt.get("spots_available") is None or tt["spots_available"] >= spots_needed:
+                        if _spots_ok(tt, spots_needed, all_courses):
                             # Calculate how far outside the window
                             try:
                                 tt_dt = datetime.strptime(tt["tee_time"], "%H:%M")
@@ -3255,7 +3297,7 @@ def _check_round_matches():
                                 .execute()
                             )
                             for tt in (nearby_resp.data or []):
-                                if tt.get("spots_available") is None or tt["spots_available"] >= spots_needed:
+                                if _spots_ok(tt, spots_needed, all_courses):
                                     course_info = all_courses.get(tt["course_id"], {})
                                     dist = nearby_distances.get(tt["course_id"], "?")
                                     suggestions.append({
@@ -3408,12 +3450,14 @@ def _check_round_matches():
                 # Going over splits into multi-part SMS which each cost
                 # separately and look weird on some carriers.
                 if creator and creator.get("phone") and creator.get("sms_opt_in") and telnyx_api_key and telnyx_phone and sms_sent < MAX_SMS_PER_CYCLE:
-                    short_url = _build_short_url(round_data)
+                    # Link straight to the matched course's booking page, not
+                    # the in-app share page.
+                    book_url = best_s.get("booking_url") or _build_short_url(round_data)
                     lead = "Stand-by alert" if is_standby_round else "Tee time found"
                     spots_str = f" ({best_s['spots_display']} spots)" if best_s.get("spots_display") else ""
                     sms_msg = (
                         f"{lead}: {best_s['time_display']} {date_display} "
-                        f"at {best_s['course_name']}{spots_str}\n{short_url}"
+                        f"at {best_s['course_name']}{spots_str}\n{book_url}"
                     )
                     if _send_sms(telnyx_api_key, telnyx_phone, creator["phone"], sms_msg):
                         sms_sent += 1
@@ -3460,12 +3504,12 @@ def _check_round_matches():
                     # SMS to co-watcher (tight, 1-part GSM-7)
                     if telnyx_api_key and telnyx_phone and sms_sent < MAX_SMS_PER_CYCLE:
                         if rsvp_profile and rsvp_profile.get("phone") and rsvp_profile.get("sms_opt_in"):
-                            short_url = _build_short_url(round_data)
+                            book_url = best_s.get("booking_url") or _build_short_url(round_data)
                             spots_str = f" ({best_s['spots_display']} spots)" if best_s.get("spots_display") else ""
                             rsvp_sms = (
                                 f"Tee time: {best_s['time_display']} {date_display} "
                                 f"at {best_s['course_name']}{spots_str}. "
-                                f"{creator_first} is watching too - first to book gets it.\n{short_url}"
+                                f"{creator_first} is watching too - first to book gets it.\n{book_url}"
                             )
                             if _send_sms(telnyx_api_key, telnyx_phone, rsvp_profile["phone"], rsvp_sms):
                                 sms_sent += 1
