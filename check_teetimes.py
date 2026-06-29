@@ -741,6 +741,10 @@ def _parse_golfnow_api_teetimes(api_bodies, facility_id):
             # — this reveals them so the parser can be corrected. Remove later.
             if not getattr(_parse_golfnow_api_teetimes, "_raw_dumped", False):
                 _parse_golfnow_api_teetimes._raw_dumped = True
+                # Persist the full raw item into THIS row's source_data so it can
+                # be read back via the Supabase REST API (no Railway log access
+                # needed) to confirm the real capacity/price key names.
+                tt["_raw_debug"] = item
                 try:
                     print(f"  [golfnow-debug] item keys: {list(item.keys())}")
                     print(f"  [golfnow-debug] item sample: {json.dumps(item, default=str)[:1800]}")
