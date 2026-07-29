@@ -49,6 +49,12 @@ export interface TeeTime {
   tee_time: string
   is_available: boolean
   price_label: string | null
+  /** Deep link to this specific slot's tee sheet. Populated on every row —
+   *  prefer it over the course-level booking_url. */
+  booking_link?: string | null
+  /** Seats the slot holds. NULL means the booking system didn't report it —
+   *  treat as unknown, never as "fits everyone". */
+  spots_available?: number | null
   courses?: Course
 }
 

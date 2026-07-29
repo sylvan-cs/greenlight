@@ -230,7 +230,9 @@ export default function RoundDetail() {
   }
 
   const handleBook = (teeTime: TeeTime) => {
-    const url = teeTime.courses?.booking_url
+    // booking_link is the deep link to this slot's tee sheet (populated on
+    // every row); the course-level URL is only a fallback to the generic page.
+    const url = teeTime.booking_link || teeTime.courses?.booking_url
     if (url) window.open(url, '_blank', 'noopener')
     setBookingTimeId(teeTime.id)
     // Store booking-in-progress flag for return detection

@@ -193,6 +193,25 @@ export default function StartRoundWho() {
       }).catch(e => console.error('notify-group-broadcast failed:', e))
     }
 
+    // "Book This Time" used to create a round with has_specific_time=true and
+    // then do nothing: the matcher skips those rounds (it filters
+    // has_specific_time=False), the course site was never opened, and Confirm
+    // Booking had nothing armed — so the round was inert from birth. Picking a
+    // slot here means "I'm booking this now", so actually send them to the tee
+    // sheet and arm the confirm step on the round page for when they return.
+    if (hasSpecific && selectedTime) {
+      const bookUrl = selectedTime.booking_link || selectedTime.courses?.booking_url
+      if (bookUrl) window.open(bookUrl, '_blank', 'noopener')
+      try {
+        localStorage.setItem(
+          `booking_${round.id}`,
+          JSON.stringify({ teeTimeId: selectedTime.id, startedAt: Date.now() })
+        )
+      } catch {
+        // Private-mode / quota: the round page just won't pre-arm Confirm.
+      }
+    }
+
     resetDraft()
     navigate(`/round/${round.id}`)
   }
