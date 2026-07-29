@@ -610,6 +610,66 @@ def check_golfnow(context, courses):
     return results
 
 
+def _hhmm(t):
+    """Trim a Postgres TIME value ('HH:MM:SS') down to 'HH:MM'.
+
+    Postgres returns TIME columns with seconds even when stored without them,
+    which breaks strptime(..., "%H:%M"). Apply at every boundary where a stored
+    time is parsed or compared.
+    """
+    if not t:
+        return t
+    s = str(t)
+    return s[:5] if len(s) >= 5 else s
+
+
+_PLAYER_RULE_WORDS = (("Four", 4), ("Three", 3), ("Two", 2), ("One", 1))
+
+
+def _players_from_rule(pr):
+    """Largest party size a GolfNow slot accepts.
+
+    GolfNow encodes bookable party sizes as an enum string that spells out the
+    allowed counts: "One", "OneTwo", "OneTwoThree", or "Any". The largest word
+    present is the biggest group that fits. Older payloads used a plain int, so
+    that is still accepted. Returns None when the value can't be interpreted —
+    the caller leaves spots_available NULL, and the matcher refuses to treat an
+    unknown capacity as "fits everyone".
+    """
+    if pr is None or isinstance(pr, bool):
+        return None
+    if isinstance(pr, (int, float)):
+        return int(pr)
+    s = str(pr).strip().lower()
+    if not s:
+        return None
+    if s == "any":
+        return 4
+    best = None
+    for word, val in _PLAYER_RULE_WORDS:
+        if word.lower() in s:
+            best = val if best is None else max(best, val)
+    return best
+
+
+def _money_value(v):
+    """Numeric amount from a GolfNow money field.
+
+    These are objects like {"value": 64.0, "formattedValue2": "$64.00", ...};
+    older payloads used a bare number. Returns None if neither shape matches.
+    """
+    if v is None or isinstance(v, bool):
+        return None
+    if isinstance(v, (int, float)):
+        return float(v)
+    if isinstance(v, dict):
+        for key in ("value", "amount"):
+            x = v.get(key)
+            if isinstance(x, (int, float)) and not isinstance(x, bool):
+                return float(x)
+    return None
+
+
 def _parse_golfnow_api_teetimes(api_bodies, facility_id):
     """Parse tee times from intercepted GolfNow API JSON responses.
 
@@ -662,66 +722,63 @@ def _parse_golfnow_api_teetimes(api_bodies, facility_id):
 
             tt = {"time": str(time_str).strip()}
 
-            # Newer GolfNow responses dropped top-level playerRule/displayRate
-            # and now carry player count + price ONLY inside teeTimeRates[].
-            # Pull the nested rates once and fall back to them. This is purely
-            # additive: if the shape differs again, the fields stay unset (same
-            # as the old behavior) rather than raising.
+            # GolfNow's current payload (confirmed from a captured live item):
+            #   playerRule        -> enum STRING: "Any" | "One" | "OneTwo" | "OneTwoThree"
+            #   displayRate       -> money OBJECT: {"value": 64.0, ...}
+            #   multipleHolesRate -> "18" (string)
+            # The old code did int(playerRule) / f"${displayRate:.0f}", which
+            # raised on the string/dict and was silently swallowed — leaving
+            # spots_available and price NULL on 100% of GolfNow rows while
+            # holes still parsed. Parse the real shapes here.
             rates = item.get("teeTimeRates")
             rates = rates if isinstance(rates, list) else []
 
-            # Players available: prefer top-level playerRule (max players);
-            # else the max playerRule across the nested rate options.
-            pr = item.get("playerRule")
+            # Players: the enum names the allowed party sizes, so the largest
+            # word is the biggest group the slot accepts.
+            pr = _players_from_rule(item.get("playerRule"))
             if pr is None and rates:
                 rate_prs = [
-                    r.get("playerRule") for r in rates
-                    if isinstance(r, dict) and r.get("playerRule") is not None
+                    _players_from_rule(r.get("playerRule"))
+                    for r in rates if isinstance(r, dict)
                 ]
+                rate_prs = [x for x in rate_prs if x is not None]
                 if rate_prs:
-                    try:
-                        pr = max(int(x) for x in rate_prs)
-                    except (ValueError, TypeError):
-                        pr = None
+                    pr = max(rate_prs)
             if pr is not None:
-                try:
-                    tt["players_available"] = int(pr)
-                except (ValueError, TypeError):
-                    pass
+                tt["players_available"] = pr
 
-            # Price: top-level displayRate, else cheapest greensFees across the
-            # nested rate options, else the preformatted minRateFormatted string.
-            display_rate = item.get("displayRate")
-            if display_rate is not None:
-                try:
-                    tt["price"] = f"${display_rate:.0f}" if float(display_rate) == int(float(display_rate)) else f"${display_rate:.2f}"
-                except (ValueError, TypeError):
-                    pass
+            # Price: top-level displayRate, else cheapest greens fee across the
+            # nested rate options, else minTeeTimeRate.
+            price_val = _money_value(item.get("displayRate"))
+            if price_val is not None:
+                tt["price"] = f"${price_val:.0f}" if price_val == int(price_val) else f"${price_val:.2f}"
             if "price" not in tt and rates:
                 rate_prices = []
                 for r in rates:
                     if not isinstance(r, dict):
                         continue
-                    gf = r.get("greensFees")
+                    # Real path is singlePlayerPrice.greensFees.value; keep the
+                    # bare greensFees lookup as a fallback for older payloads.
+                    spp = r.get("singlePlayerPrice")
                     val = None
-                    if isinstance(gf, dict):
-                        val = gf.get("value", gf.get("amount"))
-                    elif isinstance(gf, (int, float)):
-                        val = gf
-                    elif isinstance(gf, list) and gf and isinstance(gf[0], dict):
-                        val = gf[0].get("value", gf[0].get("amount"))
+                    if isinstance(spp, dict):
+                        val = _money_value(spp.get("greensFees"))
+                    if val is None:
+                        val = _money_value(r.get("greensFees"))
                     if val is not None:
-                        try:
-                            rate_prices.append(float(val))
-                        except (ValueError, TypeError):
-                            pass
+                        rate_prices.append(val)
                 if rate_prices:
                     lo = min(rate_prices)
                     tt["price"] = f"${lo:.0f}" if lo == int(lo) else f"${lo:.2f}"
             if "price" not in tt:
-                formatted = item.get("minRateFormatted")
-                if formatted:
-                    tt["price"] = str(formatted)
+                # minRateFormatted was renamed to minTeeTimeRate (money object).
+                lo = _money_value(item.get("minTeeTimeRate"))
+                if lo is not None:
+                    tt["price"] = f"${lo:.0f}" if lo == int(lo) else f"${lo:.2f}"
+                else:
+                    formatted = item.get("minRateFormatted")
+                    if formatted and not isinstance(formatted, dict):
+                        tt["price"] = str(formatted)
 
             # Holes: from teeTimeRates or multipleHolesRate
             holes = item.get("multipleHolesRate")
@@ -733,22 +790,6 @@ def _parse_golfnow_api_teetimes(api_bodies, facility_id):
                 try:
                     tt["holes"] = int(holes)
                 except (ValueError, TypeError):
-                    pass
-
-            # One-time raw-item dump so GolfNow's current API shape shows up in
-            # Railway logs. Top-level playerRule/displayRate are gone and the
-            # nested teeTimeRates[] keys for capacity/price are still unconfirmed
-            # — this reveals them so the parser can be corrected. Remove later.
-            if not getattr(_parse_golfnow_api_teetimes, "_raw_dumped", False):
-                _parse_golfnow_api_teetimes._raw_dumped = True
-                # Persist the full raw item into THIS row's source_data so it can
-                # be read back via the Supabase REST API (no Railway log access
-                # needed) to confirm the real capacity/price key names.
-                tt["_raw_debug"] = item
-                try:
-                    print(f"  [golfnow-debug] item keys: {list(item.keys())}")
-                    print(f"  [golfnow-debug] item sample: {json.dumps(item, default=str)[:1800]}")
-                except Exception:
                     pass
 
             tt["source"] = "api"
@@ -2367,8 +2408,36 @@ def _build_short_url(round_data):
     return f"https://thestarter.golf/r/{code}" if code else "https://thestarter.golf"
 
 
+def _to_e164(phone):
+    """Normalize a US phone number to E.164 ('+15551234567').
+
+    Telnyx rejects anything else with a 400, and the failure only ever printed
+    to stdout — so numbers stored as '5551234567' or '(555) 123-4567' meant the
+    user silently never received a text. Returns None if it can't be normalized.
+    """
+    if not phone:
+        return None
+    s = str(phone).strip()
+    if s.startswith("+"):
+        digits = "".join(ch for ch in s[1:] if ch.isdigit())
+        return f"+{digits}" if digits else None
+    digits = "".join(ch for ch in s if ch.isdigit())
+    if len(digits) == 10:
+        return f"+1{digits}"
+    if len(digits) == 11 and digits.startswith("1"):
+        return f"+{digits}"
+    return None
+
+
 def _send_sms(api_key, from_phone, to_phone, message):
     """Send an SMS via Telnyx. Returns True on success."""
+    to_e164 = _to_e164(to_phone)
+    if not to_e164:
+        print(f"    Telnyx: skipping unusable phone {to_phone!r} (cannot normalize to E.164)")
+        return False
+    to_phone = to_e164
+    from_e164 = _to_e164(from_phone) or from_phone
+    from_phone = from_e164
     try:
         import urllib.request
         import urllib.error
@@ -2423,7 +2492,10 @@ def _send_match_email(to_email, suggestions, round_id,
     used only on first-match for rounds with rounds.standby_mode = true.
     """
     api_key = os.environ.get("RESEND_API_KEY", "")
-    to_email = os.environ.get("NOTIFY_EMAIL") or to_email
+    # NOTE: no NOTIFY_EMAIL override here. It used to redirect EVERY user
+    # notification to a single inbox while the ledger logged the intended
+    # recipient — silent, undetectable mis-delivery. Test with a real
+    # account instead.
     if not api_key or api_key.startswith("re_YOUR"):
         print("WARNING: RESEND_API_KEY not set \u2014 email notifications disabled")
         return False
@@ -2522,7 +2594,10 @@ def _send_rsvp_email(to_email, creator_name, suggestions,
                      searched_courses=None):
     """Send RSVP notification email via Resend."""
     api_key = os.environ.get("RESEND_API_KEY", "")
-    to_email = os.environ.get("NOTIFY_EMAIL") or to_email
+    # NOTE: no NOTIFY_EMAIL override here. It used to redirect EVERY user
+    # notification to a single inbox while the ledger logged the intended
+    # recipient — silent, undetectable mis-delivery. Test with a real
+    # account instead.
     if not api_key or api_key.startswith("re_YOUR"):
         print("WARNING: RESEND_API_KEY not set \u2014 email notifications disabled")
         return False
@@ -3208,10 +3283,14 @@ def _check_round_matches():
                 # Stand-by rounds skip flex too — user wants exact-window-only
                 # alerts for cancellations on their target courses.
                 if not is_standby_round and flexibility_minutes and flexibility_minutes > 0:
-                    # Calculate expanded window
+                    # Calculate expanded window. Postgres returns TIME columns
+                    # as 'HH:MM:SS', so these MUST be trimmed before strptime —
+                    # otherwise it raises, the except collapses the flex window
+                    # to the exact window, and this whole tier silently returns
+                    # nothing (flexibility_minutes became a no-op).
                     try:
-                        start_dt = datetime.strptime(time_start, "%H:%M")
-                        end_dt = datetime.strptime(time_end, "%H:%M")
+                        start_dt = datetime.strptime(_hhmm(time_start), "%H:%M")
+                        end_dt = datetime.strptime(_hhmm(time_end), "%H:%M")
                         flex_start = (start_dt - timedelta(minutes=flexibility_minutes)).strftime("%H:%M")
                         flex_end = (end_dt + timedelta(minutes=flexibility_minutes)).strftime("%H:%M")
                     except Exception:
@@ -3239,7 +3318,7 @@ def _check_round_matches():
                         if _spots_ok(tt, spots_needed, all_courses):
                             # Calculate how far outside the window
                             try:
-                                tt_dt = datetime.strptime(tt["tee_time"], "%H:%M")
+                                tt_dt = datetime.strptime(_hhmm(tt["tee_time"]), "%H:%M")
                                 if tt_dt < start_dt:
                                     diff = int((start_dt - tt_dt).total_seconds() / 60)
                                 else:

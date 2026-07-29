@@ -8,7 +8,7 @@ export default async function handler(request: Request) {
     })
   }
 
-  const { roundId, bookerId } = await request.json()
+  const { roundId, bookerId, teeTimeId } = await request.json()
   if (!roundId) {
     return new Response(JSON.stringify({ error: 'Missing roundId' }), {
       status: 400,
@@ -42,7 +42,67 @@ export default async function handler(request: Request) {
   const telnyxPhone = process.env.TELNYX_PHONE_NUMBER
   const telnyxConfigured = !!(telnyxApiKey && telnyxPhone)
 
-  // Fetch the round with courses and RSVPs
+  // This endpoint is the SINGLE WRITER for the booked transition. Clients must
+  // not flip rounds.status themselves: doing so used to make the guard below
+  // see an already-'booked' round and 409 on every call, so the "locked it in"
+  // notification never sent. Claiming here keeps it race-safe and idempotent —
+  // whoever wins the conditional update is the one who notifies.
+
+  // Resolve the tee time server-side rather than trusting client-sent values.
+  let slot: { id: string; tee_time: string; course_id: string } | null = null
+  if (teeTimeId) {
+    const ttRes = await fetch(
+      `${supabaseUrl}/rest/v1/tee_times?id=eq.${teeTimeId}&select=id,tee_time,course_id`,
+      { headers }
+    )
+    const tts = await ttRes.json()
+    slot = tts?.[0] ?? null
+  }
+
+  const claim: Record<string, unknown> = {
+    status: 'booked',
+    updated_at: new Date().toISOString(),
+  }
+  if (slot) {
+    claim.has_specific_time = true
+    claim.specific_tee_time = slot.tee_time
+    claim.specific_course_id = slot.course_id
+    claim.matched_tee_time_id = slot.id
+    claim.matched_at = new Date().toISOString()
+  }
+
+  // Only a non-terminal round can be claimed. 'found' MUST be included — it is
+  // the normal state after the matcher finds a time, i.e. the common case.
+  const claimRes = await fetch(
+    `${supabaseUrl}/rest/v1/rounds?id=eq.${roundId}&status=in.(open,watching,found)`,
+    {
+      method: 'PATCH',
+      headers: { ...headers, 'Content-Type': 'application/json', Prefer: 'return=representation' },
+      body: JSON.stringify(claim),
+    }
+  )
+  const claimed = await claimRes.json()
+
+  if (!Array.isArray(claimed) || claimed.length === 0) {
+    // Either already booked/cancelled (genuine race) or the id doesn't exist.
+    const existsRes = await fetch(
+      `${supabaseUrl}/rest/v1/rounds?id=eq.${roundId}&select=id,status`,
+      { headers }
+    )
+    const existing = await existsRes.json()
+    if (!existing?.[0]) {
+      return new Response(JSON.stringify({ error: 'Round not found' }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    }
+    return new Response(
+      JSON.stringify({ error: 'Someone already booked this round', status: existing[0].status }),
+      { status: 409, headers: { 'Content-Type': 'application/json' } }
+    )
+  }
+
+  // We won the claim — load the full round (with embeds) to build notifications.
   const roundRes = await fetch(
     `${supabaseUrl}/rest/v1/rounds?id=eq.${roundId}&select=*,round_courses(*,courses(*)),rsvps(*)`,
     { headers }
@@ -53,14 +113,6 @@ export default async function handler(request: Request) {
   if (!round) {
     return new Response(JSON.stringify({ error: 'Round not found' }), {
       status: 400,
-      headers: { 'Content-Type': 'application/json' },
-    })
-  }
-
-  // If round is already booked by someone else, return conflict
-  if (round.status === 'booked') {
-    return new Response(JSON.stringify({ error: 'Someone already booked this round' }), {
-      status: 409,
       headers: { 'Content-Type': 'application/json' },
     })
   }
@@ -120,7 +172,7 @@ export default async function handler(request: Request) {
     .map((r: any) => r.email)
 
   if (recipients.length === 0) {
-    return new Response(JSON.stringify({ ok: true, sent: 0, sms: 0 }), {
+    return new Response(JSON.stringify({ ok: true, sent: 0, sms: 0, round }), {
       headers: { 'Content-Type': 'application/json' },
     })
   }
@@ -199,7 +251,7 @@ export default async function handler(request: Request) {
     }
   }
 
-  return new Response(JSON.stringify({ ok: true, sent, sms: smsSent }), {
+  return new Response(JSON.stringify({ ok: true, sent, sms: smsSent, round }), {
     headers: { 'Content-Type': 'application/json' },
   })
 }

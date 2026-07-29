@@ -51,6 +51,7 @@ export default function RoundDetail() {
   const [showCancelConfirm, setShowCancelConfirm] = useState(false)
   const [bookingTimeId, setBookingTimeId] = useState<string | null>(null)
   const [confirming, setConfirming] = useState(false)
+  const [bookingError, setBookingError] = useState('')
   const [availableTimes, setAvailableTimes] = useState<TeeTime[]>([])
   const [loadingTimes, setLoadingTimes] = useState(true)
   const [collapsedCourses, setCollapsedCourses] = useState<Set<string>>(new Set())
@@ -239,39 +240,32 @@ export default function RoundDetail() {
   const handleConfirmBooking = async () => {
     if (!round || !bookingTimeId) return
     setConfirming(true)
-    const bookedTime = availableTimes.find(t => t.id === bookingTimeId)
-    if (!bookedTime) {
-      setConfirming(false)
-      return
-    }
+    setBookingError('')
 
-    // Precondition: only confirm if the round is still in 'watching' state.
-    // If a co-watcher already confirmed, the row will not match and `data` is empty.
-    const { data, error } = await supabase
-      .from('rounds')
-      .update({
-        status: 'booked',
-        has_specific_time: true,
-        specific_tee_time: bookedTime.tee_time,
-        specific_course_id: bookedTime.course_id,
-        matched_tee_time_id: bookedTime.id,
-        matched_at: new Date().toISOString(),
+    // /api/notify-booking is the single writer for the booked transition: it
+    // claims the round atomically and only notifies the group if it won. We
+    // must NOT flip status here first — that used to make the endpoint see an
+    // already-'booked' round and refuse, so the "locked it in" alert never
+    // sent. The tee time is resolved server-side from its id, so this still
+    // works after the slot leaves the live availability list.
+    let res: Response
+    try {
+      res = await fetch('/api/notify-booking', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ roundId: round.id, bookerId: user?.id, teeTimeId: bookingTimeId }),
       })
-      .eq('id', round.id)
-      .eq('status', 'watching')
-      .select()
-
-    if (error) {
-      alert('Could not confirm booking: ' + error.message)
+    } catch {
+      setBookingError("Couldn't reach the server. Check your connection and try again.")
       setConfirming(false)
-      setBookingTimeId(null)
       return
     }
 
-    if (!data || data.length === 0) {
-      // Someone else already booked this round.
-      alert('This round was just booked by someone else in your group.')
-      // Re-fetch the latest round state so the UI reflects what they did
+    const payload = await res.json().catch(() => ({}))
+
+    if (res.status === 409) {
+      // Genuine race: someone else in the group already booked it.
+      setBookingError('This round was just booked by someone else in your group.')
       const { data: fresh } = await supabase
         .from('rounds')
         .select('*, round_courses(*, courses(*)), rsvps(*)')
@@ -284,22 +278,18 @@ export default function RoundDetail() {
       return
     }
 
-    localStorage.removeItem(`booking_${id}`)
-    setRound(prev => prev ? {
-      ...prev,
-      status: 'booked',
-      has_specific_time: true,
-      specific_tee_time: bookedTime.tee_time,
-      specific_course_id: bookedTime.course_id,
-      matched_tee_time_id: bookedTime.id,
-    } : prev)
+    if (!res.ok) {
+      setBookingError(payload?.error || 'Could not confirm booking. Please try again.')
+      setConfirming(false)
+      return
+    }
 
-    // Send booking notification emails (fire-and-forget)
-    fetch('/api/notify-booking', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ roundId: round.id, bookerId: user?.id }),
-    }).catch(e => console.error('notify-booking failed:', e))
+    localStorage.removeItem(`booking_${id}`)
+    if (payload?.round) {
+      setRound(payload.round as RoundWithDetails)
+    } else {
+      setRound(prev => (prev ? { ...prev, status: 'booked' } : prev))
+    }
 
     setConfirming(false)
     setBookingTimeId(null)
@@ -914,9 +904,15 @@ export default function RoundDetail() {
                                 </>
                               )}
                             </button>
-                            <p className="text-xs font-body text-muted-foreground text-center">
-                              Done booking on {tt.courses?.name ?? 'the course'}'s site? Confirm to let your crew know.
-                            </p>
+                            {bookingError ? (
+                              <p className="text-xs font-body text-destructive text-center">
+                                {bookingError}
+                              </p>
+                            ) : (
+                              <p className="text-xs font-body text-muted-foreground text-center">
+                                Done booking on {tt.courses?.name ?? 'the course'}'s site? Confirm to let your crew know.
+                              </p>
+                            )}
                             <button
                               onClick={() => {
                                 setBookingTimeId(null)
