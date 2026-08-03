@@ -33,7 +33,7 @@ export default function SharePage() {
         .select(`
           *,
           round_courses(*, courses(*)),
-          rsvps(*)
+          rsvps(id, round_id, user_id, name, status, is_watching, created_at)
         `)
         .eq('share_code', shareCode!)
         .single()
