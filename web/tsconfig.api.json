@@ -1,0 +1,19 @@
+{
+  "//": "The serverless functions in api/ (and their shared helpers in lib/) were never typechecked: tsconfig.app.json only includes src, so `tsc -b` silently skipped them. They hold the service-role key and send email/SMS, so they are the last place we want unchecked code. Wired into `npm run build` via the typecheck:api script.",
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "types": [],
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "isolatedModules": true,
+    "verbatimModuleSyntax": true
+  },
+  "include": ["api", "lib"]
+}
