@@ -1,3 +1,5 @@
+import { requireUser, userIsOnRound, authFailure } from '../lib/apiAuth'
+
 export const config = { runtime: 'edge' }
 
 export default async function handler(request: Request) {
@@ -23,6 +25,19 @@ export default async function handler(request: Request) {
   if (!supabaseUrl || !supabaseKey || !resendKey) {
     return new Response(JSON.stringify({ error: 'Missing server configuration' }), {
       status: 500,
+      headers: { 'Content-Type': 'application/json' },
+    })
+  }
+
+  // Auth: only a member of this round may send invites for it. Note the
+  // caller-supplied invitedUserIds are additionally bounded below to people
+  // who actually have an RSVP row on this round — previously any user id in
+  // the system could be emailed.
+  const auth = await requireUser(request, supabaseUrl, supabaseKey)
+  if (!auth.ok) return authFailure(auth)
+  if (!(await userIsOnRound(supabaseUrl, supabaseKey, roundId, auth.userId))) {
+    return new Response(JSON.stringify({ error: 'Not a member of this round' }), {
+      status: 403,
       headers: { 'Content-Type': 'application/json' },
     })
   }
@@ -80,20 +95,28 @@ export default async function handler(request: Request) {
   )
 
   if (invitedRsvps.length === 0) {
-    // Fall back: fetch emails from profiles
-    const profileRes = await fetch(
-      `${supabaseUrl}/rest/v1/profiles?id=in.(${invitedUserIds.join(',')})&select=id,email`,
-      {
-        headers: {
-          apikey: supabaseKey,
-          Authorization: `Bearer ${supabaseKey}`,
-        },
-      }
+    // Fall back to profile emails — but ONLY for user ids that actually have
+    // an RSVP row on THIS round. The previous version looked up whatever ids
+    // the caller sent, so any user in the system could be emailed by anyone.
+    const roundUserIds = new Set(
+      (round.rsvps ?? []).map((r: any) => r.user_id).filter(Boolean)
     )
-    const profiles = await profileRes.json()
-    if (profiles?.length) {
-      for (const p of profiles) {
-        if (p.email) invitedRsvps.push({ email: p.email })
+    const allowedIds = (invitedUserIds as string[]).filter(uid => roundUserIds.has(uid))
+    if (allowedIds.length > 0) {
+      const profileRes = await fetch(
+        `${supabaseUrl}/rest/v1/profiles?id=in.(${allowedIds.map(encodeURIComponent).join(',')})&select=id,email`,
+        {
+          headers: {
+            apikey: supabaseKey,
+            Authorization: `Bearer ${supabaseKey}`,
+          },
+        }
+      )
+      const profiles = await profileRes.json()
+      if (profiles?.length) {
+        for (const p of profiles) {
+          if (p.email) invitedRsvps.push({ email: p.email })
+        }
       }
     }
   }

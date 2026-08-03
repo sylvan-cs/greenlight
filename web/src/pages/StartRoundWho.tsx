@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
+import { apiPost } from '../lib/apiPost'
 import { useAuth } from '../contexts/AuthContext'
 import { getDraft, resetDraft } from '../lib/roundStore'
 import { generateShareCode, formatTime, formatDateShort, getTimeWindowLabel } from '../lib/helpers'
@@ -168,13 +169,9 @@ export default function StartRoundWho() {
       await supabase.from('rsvps').insert(inviteInserts)
 
       // Send invite notifications (fire-and-forget)
-      fetch('/api/notify-invite', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          roundId: round.id,
-          invitedUserIds: draft.invitedUsers.map(u => u.id),
-        }),
+      apiPost('/api/notify-invite', {
+        roundId: round.id,
+        invitedUserIds: draft.invitedUsers.map(u => u.id),
       }).catch(e => console.error('notify-invite failed:', e))
     }
 
@@ -183,13 +180,9 @@ export default function StartRoundWho() {
     // each selected group who isn't already on the round. No RSVPs created
     // upfront; recipients opt in via the share link if interested.
     if (draft.notifyGroupIds.length > 0) {
-      fetch('/api/notify-group-broadcast', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          roundId: round.id,
-          groupIds: draft.notifyGroupIds,
-        }),
+      apiPost('/api/notify-group-broadcast', {
+        roundId: round.id,
+        groupIds: draft.notifyGroupIds,
       }).catch(e => console.error('notify-group-broadcast failed:', e))
     }
 

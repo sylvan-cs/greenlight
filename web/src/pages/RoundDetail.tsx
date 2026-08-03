@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
+import { apiPost } from '../lib/apiPost'
 import { useAuth } from '../contexts/AuthContext'
 import { formatDateShort, formatDatesShort, formatTime, getTimeWindowLabel, generateDateChips } from '../lib/helpers'
 import { DAY_PARTS, DAY_PART_META, computeTimeRange, type DayPart } from '../lib/roundStore'
@@ -252,10 +253,10 @@ export default function RoundDetail() {
     // works after the slot leaves the live availability list.
     let res: Response
     try {
-      res = await fetch('/api/notify-booking', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ roundId: round.id, bookerId: user?.id, teeTimeId: bookingTimeId }),
+      res = await apiPost('/api/notify-booking', {
+        roundId: round.id,
+        bookerId: user?.id,
+        teeTimeId: bookingTimeId,
       })
     } catch {
       setBookingError("Couldn't reach the server. Check your connection and try again.")
@@ -476,11 +477,8 @@ export default function RoundDetail() {
     }
 
     // Send update notification email (fire-and-forget)
-    fetch('/api/notify-round-update', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ roundId: round.id, editorId: user?.id }),
-    }).catch(e => console.error('notify-round-update failed:', e))
+    apiPost('/api/notify-round-update', { roundId: round.id, editorId: user?.id })
+      .catch(e => console.error('notify-round-update failed:', e))
 
     setEditing(false)
     setSaving(false)
@@ -1187,11 +1185,8 @@ export default function RoundDetail() {
                 setInviteFlash(`Invited ${u.full_name.split(' ')[0]}`)
                 setTimeout(() => setInviteFlash(null), 2500)
 
-                fetch('/api/notify-invite', {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ roundId: round.id, invitedUserIds: [u.id] }),
-                }).catch(e => console.error('notify-invite failed:', e))
+                apiPost('/api/notify-invite', { roundId: round.id, invitedUserIds: [u.id] })
+                  .catch(e => console.error('notify-invite failed:', e))
               })
             }}
             existingUserIds={rsvps.filter(r => r.user_id).map(r => r.user_id!)}

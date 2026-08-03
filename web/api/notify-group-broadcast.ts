@@ -1,3 +1,5 @@
+import { requireUser, userIsOnRound, userIsInGroups, authFailure } from '../lib/apiAuth'
+
 export const config = { runtime: 'edge' }
 
 /**
@@ -36,6 +38,23 @@ export default async function handler(request: Request) {
   if (!supabaseUrl || !supabaseKey || !resendKey) {
     return new Response(JSON.stringify({ error: 'Missing server configuration' }), {
       status: 500,
+      headers: { 'Content-Type': 'application/json' },
+    })
+  }
+
+  // Auth: the caller must be on the round AND a member of every group they
+  // are broadcasting to, so this can't be used to mail arbitrary groups.
+  const auth = await requireUser(request, supabaseUrl, supabaseKey)
+  if (!auth.ok) return authFailure(auth)
+  if (!(await userIsOnRound(supabaseUrl, supabaseKey, roundId, auth.userId))) {
+    return new Response(JSON.stringify({ error: 'Not a member of this round' }), {
+      status: 403,
+      headers: { 'Content-Type': 'application/json' },
+    })
+  }
+  if (!(await userIsInGroups(supabaseUrl, supabaseKey, groupIds, auth.userId))) {
+    return new Response(JSON.stringify({ error: 'Not a member of every group' }), {
+      status: 403,
       headers: { 'Content-Type': 'application/json' },
     })
   }

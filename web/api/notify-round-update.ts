@@ -1,3 +1,5 @@
+import { requireUser, userIsOnRound, authFailure } from '../lib/apiAuth'
+
 export const config = { runtime: 'edge' }
 
 export default async function handler(request: Request) {
@@ -23,6 +25,16 @@ export default async function handler(request: Request) {
   if (!supabaseUrl || !supabaseKey || !resendKey) {
     return new Response(JSON.stringify({ error: 'Missing server configuration' }), {
       status: 500,
+      headers: { 'Content-Type': 'application/json' },
+    })
+  }
+
+  // Auth: only a member of this round may notify it of an update.
+  const auth = await requireUser(request, supabaseUrl, supabaseKey)
+  if (!auth.ok) return authFailure(auth)
+  if (!(await userIsOnRound(supabaseUrl, supabaseKey, roundId, auth.userId))) {
+    return new Response(JSON.stringify({ error: 'Not a member of this round' }), {
+      status: 403,
       headers: { 'Content-Type': 'application/json' },
     })
   }

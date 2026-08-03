@@ -1,3 +1,5 @@
+import { requireUser, userIsOnRound, authFailure } from '../lib/apiAuth'
+
 export const config = { runtime: 'edge' }
 
 export default async function handler(request: Request) {
@@ -35,6 +37,18 @@ export default async function handler(request: Request) {
   const headers = {
     apikey: supabaseKey,
     Authorization: `Bearer ${supabaseKey}`,
+  }
+
+  // Auth: only someone actually on this round may mark it booked and notify
+  // the group. This endpoint holds the service-role key, so without this gate
+  // anyone with a roundId could email/SMS the whole group.
+  const auth = await requireUser(request, supabaseUrl, supabaseKey)
+  if (!auth.ok) return authFailure(auth)
+  if (!(await userIsOnRound(supabaseUrl, supabaseKey, roundId, auth.userId))) {
+    return new Response(JSON.stringify({ error: 'Not a member of this round' }), {
+      status: 403,
+      headers: { 'Content-Type': 'application/json' },
+    })
   }
 
   // Telnyx env vars (optional — SMS skipped if not configured)

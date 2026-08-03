@@ -1,3 +1,5 @@
+import { requireUser, userIsInGroups, authFailure } from '../lib/apiAuth'
+
 export const config = { runtime: 'edge' }
 
 export default async function handler(request: Request) {
@@ -23,6 +25,23 @@ export default async function handler(request: Request) {
   if (!supabaseUrl || !supabaseKey || !resendKey) {
     return new Response(JSON.stringify({ error: 'Missing server configuration' }), {
       status: 500,
+      headers: { 'Content-Type': 'application/json' },
+    })
+  }
+
+  // Auth: the caller must be the user who joined, and must actually be in the
+  // group now. Prevents forging join announcements to arbitrary groups.
+  const auth = await requireUser(request, supabaseUrl, supabaseKey)
+  if (!auth.ok) return authFailure(auth)
+  if (newUserId && newUserId !== auth.userId) {
+    return new Response(JSON.stringify({ error: 'Cannot announce a join for another user' }), {
+      status: 403,
+      headers: { 'Content-Type': 'application/json' },
+    })
+  }
+  if (!(await userIsInGroups(supabaseUrl, supabaseKey, [groupId], auth.userId))) {
+    return new Response(JSON.stringify({ error: 'Not a member of this group' }), {
+      status: 403,
       headers: { 'Content-Type': 'application/json' },
     })
   }

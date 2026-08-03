@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
+import { apiPost } from '../lib/apiPost'
 import { useAuth } from '../contexts/AuthContext'
 import Avatar from '../components/Avatar'
 
@@ -77,11 +78,8 @@ export default function JoinGroup() {
     }
 
     // Send notification to group owner (fire-and-forget)
-    fetch('/api/notify-group-join', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ groupId: group.id, newUserId: user.id }),
-    }).catch(e => console.error('notify-group-join failed:', e))
+    apiPost('/api/notify-group-join', { groupId: group.id, newUserId: user.id })
+      .catch(e => console.error('notify-group-join failed:', e))
 
     setJoined(true)
     setJoining(false)
