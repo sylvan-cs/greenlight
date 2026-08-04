@@ -254,6 +254,58 @@ def _filter_courses(courses, config):
     return [c for c in courses if course_flags.get(c["key"], {}).get("enabled", False)]
 
 
+def _record_run_start(mode, looping):
+    """Open a scraper_runs row so each service's mode/cadence is observable.
+
+    Best-effort: telemetry must never break a scrape, so every failure here is
+    swallowed and returns None.
+    """
+    supabase_url = os.environ.get("SUPABASE_URL", "")
+    supabase_key = os.environ.get("SUPABASE_SERVICE_KEY", "")
+    if not supabase_url or not supabase_key:
+        return None
+    try:
+        from supabase import create_client
+        sb = create_client(supabase_url, supabase_key)
+        resp = sb.table("scraper_runs").insert({
+            "service": os.environ.get("RAILWAY_SERVICE_NAME") or _RUNNER,
+            "mode": mode,
+            "looping": bool(looping),
+            "git_sha": os.environ.get("RAILWAY_GIT_COMMIT_SHA"),
+        }).execute()
+        rows = resp.data or []
+        return rows[0]["id"] if rows else None
+    except Exception as e:
+        print(f"  (scraper_runs start not recorded: {e})")
+        return None
+
+
+def _record_run_end(run_id, courses_scanned=None, rows_upserted=None,
+                    matches_sent=None, error=None):
+    """Close out the scraper_runs row. Best-effort, never raises."""
+    if not run_id:
+        return
+    supabase_url = os.environ.get("SUPABASE_URL", "")
+    supabase_key = os.environ.get("SUPABASE_SERVICE_KEY", "")
+    if not supabase_url or not supabase_key:
+        return
+    try:
+        from supabase import create_client
+        sb = create_client(supabase_url, supabase_key)
+        patch = {"finished_at": datetime.now(timezone.utc).isoformat()}
+        if courses_scanned is not None:
+            patch["courses_scanned"] = courses_scanned
+        if rows_upserted is not None:
+            patch["rows_upserted"] = rows_upserted
+        if matches_sent is not None:
+            patch["matches_sent"] = matches_sent
+        if error:
+            patch["error"] = str(error)[:500]
+        sb.table("scraper_runs").update(patch).eq("id", run_id).execute()
+    except Exception as e:
+        print(f"  (scraper_runs end not recorded: {e})")
+
+
 def _standby_filter_courses_and_dates(courses):
     """Restrict courses + DATES_TO_CHECK to what standby-mode rounds need.
 
@@ -267,7 +319,14 @@ def _standby_filter_courses_and_dates(courses):
     supabase_url = os.environ.get("SUPABASE_URL", "")
     supabase_key = os.environ.get("SUPABASE_SERVICE_KEY", "")
     if not supabase_url or not supabase_key:
-        return [], []
+        # Do NOT return ([], []) here. That is indistinguishable from "no
+        # standby rounds are active", so a service missing its Supabase
+        # credentials printed a healthy-looking "Skipping." forever while
+        # silently polling nothing. Fail loudly instead.
+        raise RuntimeError(
+            "Stand-by mode requires SUPABASE_URL and SUPABASE_SERVICE_KEY. "
+            "Set them on this Railway service."
+        )
 
     try:
         from supabase import create_client
@@ -313,9 +372,13 @@ def _standby_filter_courses_and_dates(courses):
         dates_sorted = sorted(active_dates)
         dates_to_check = [(d, d) for d in dates_sorted]
         return filtered, dates_to_check
+    except RuntimeError:
+        raise
     except Exception as e:
-        print(f"  Stand-by filter failed: {e}")
-        return [], []
+        # A query failure is NOT the same as "nothing to poll" — surface it so
+        # a broken standby service can't masquerade as an idle one.
+        print(f"  Stand-by filter FAILED (not the same as 'no rounds'): {e}")
+        raise
 
 
 def _demand_filter_courses(courses):
@@ -416,15 +479,24 @@ def _build_dates_to_check():
     print(f"  Dates to check: {', '.join(d for _, d in DATES_TO_CHECK)}")
 
 
-def run(scan_all=False, standby_only=False):
+def run(scan_all=False, standby_only=False, looping=False):
     global DATES_TO_CHECK
     config = _load_config()
+
+    mode = "standby" if standby_only else ("all" if scan_all else "cron")
+    # Announce identity every cycle so Railway logs say which service+mode is
+    # actually running — the stand-by service silently running the default
+    # cron config was invisible for weeks.
+    print(f"[run] service={os.environ.get('RAILWAY_SERVICE_NAME') or _RUNNER} "
+          f"mode={mode} looping={looping} sha={(os.environ.get('RAILWAY_GIT_COMMIT_SHA') or 'dev')[:7]}")
+    run_id = _record_run_start(mode, looping)
 
     if standby_only:
         active_courses = _filter_courses(COURSES, config)
         active_courses, dates_to_check = _standby_filter_courses_and_dates(active_courses)
         if not active_courses or not dates_to_check:
-            print("Stand-by poll: no active stand-by rounds. Skipping.")
+            print("Stand-by poll: no active stand-by rounds right now (config OK). Skipping.")
+            _record_run_end(run_id, courses_scanned=0)
             return
         DATES_TO_CHECK = dates_to_check
         print("GreenLight - Stand-by poll (fast cycle)")
@@ -448,6 +520,7 @@ def run(scan_all=False, standby_only=False):
 
     if not active_courses:
         print("No courses enabled. Edit scan_config.json or use --all.")
+        _record_run_end(run_id, courses_scanned=0)
         return
 
     # Group courses by booking system
@@ -513,6 +586,8 @@ def run(scan_all=False, standby_only=False):
 
     # Check for matching rounds and send email/SMS alerts
     _check_round_matches()
+
+    _record_run_end(run_id, courses_scanned=len(active_courses))
 
 
 # =========================================================================
@@ -3690,7 +3765,13 @@ if __name__ == "__main__":
         while True:
             cycle_start = time.time()
             try:
-                run(scan_all=args.all, standby_only=args.standby)
+                run(scan_all=args.all, standby_only=args.standby, looping=True)
+            except RuntimeError as e:
+                # Misconfiguration (e.g. missing Supabase creds) will never fix
+                # itself. Exit non-zero so Railway surfaces a failed service
+                # instead of showing "Online" while it no-ops every 90s.
+                print(f"FATAL: {e}")
+                raise SystemExit(1)
             except Exception as e:
                 print(f"Loop cycle errored: {e}")
             elapsed = time.time() - cycle_start
@@ -3699,4 +3780,4 @@ if __name__ == "__main__":
                 print(f"Loop: sleeping {sleep_for:.1f}s until next cycle")
                 time.sleep(sleep_for)
     else:
-        run(scan_all=args.all, standby_only=args.standby)
+        run(scan_all=args.all, standby_only=args.standby, looping=False)
