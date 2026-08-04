@@ -582,12 +582,17 @@ def run(scan_all=False, standby_only=False, looping=False):
     _notify(all_results, config)
 
     # Sync to Supabase
-    _sync_to_supabase(all_results, active_courses)
+    upserted = _sync_to_supabase(all_results, active_courses)
 
     # Check for matching rounds and send email/SMS alerts
     _check_round_matches()
 
-    _record_run_end(run_id, courses_scanned=len(active_courses))
+    # rows_upserted is the productivity signal. A stand-by cycle that scrapes 6
+    # courses but upserts 0 rows did no useful work — a pattern that is
+    # invisible from tee_times timestamps alone (they only change when
+    # something is written).
+    _record_run_end(run_id, courses_scanned=len(active_courses),
+                    rows_upserted=upserted)
 
 
 # =========================================================================
@@ -2138,7 +2143,7 @@ def _sync_to_supabase(all_results, active_courses):
 
     if not supabase_url or not supabase_key:
         print("\nSupabase: skipping (SUPABASE_URL / SUPABASE_SERVICE_KEY not set)")
-        return
+        return None
 
     try:
         from supabase import create_client
@@ -2336,6 +2341,7 @@ def _sync_to_supabase(all_results, active_courses):
                 )
                 stale_total += len(resp.data) if resp.data else 0
         print(f"  Supabase: marked {stale_total} stale tee times as unavailable")
+        return upserted
 
     except Exception as e:
         print(f"\nSupabase sync error: {e}")
